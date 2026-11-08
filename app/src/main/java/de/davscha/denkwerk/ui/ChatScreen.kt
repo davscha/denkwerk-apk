@@ -686,6 +686,17 @@ private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null) {
             )
         }
     }
+    // Fehler vollständig lesbar machen (oben wird er abgeschnitten)
+    if (!t.ok && !t.running && t.summary.length > 30) {
+        Text(
+            t.summary,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.error,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+        )
+    }
     if (onClick != null) {
         Text(
             "→ In Google Lens öffnen",

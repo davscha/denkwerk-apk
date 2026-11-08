@@ -38,15 +38,57 @@ object ReverseImageSearch {
      * Versucht yandex.com und yandex.ru; der Fehler sagt genau, woran es lag.
      */
     fun yandex(image: String): ReverseResult {
-        var last: Exception? = null
+        val errors = mutableListOf<String>()
         for (host in listOf("yandex.com", "yandex.ru")) {
+            // Neuer Weg (so lädt die Yandex-Webseite heute hoch), danach der alte
+            if (!image.startsWith("http")) {
+                try {
+                    return yandexResults(host, yandexApphostUpload(host, File(image)))
+                } catch (e: Exception) {
+                    errors += "$host (neu): ${e.message}"
+                }
+            }
             try {
                 return yandexOn(host, image)
             } catch (e: Exception) {
-                last = e
+                errors += "$host: ${e.message}"
             }
         }
-        throw IOException(last?.message ?: "Yandex nicht erreichbar", last)
+        throw IOException(errors.joinToString(" | ").ifBlank { "Yandex nicht erreichbar" })
+    }
+
+    /**
+     * Hochladen wie die heutige Yandex-Webseite: Bild roh an images-apphost schicken,
+     * zurück kommen image_id/image_shard/url → daraus die Ergebnis-Adresse bauen.
+     */
+    private fun yandexApphostUpload(host: String, file: File): String {
+        val bytes = uploadBytes(file)
+        val c = URL("https://$host/images-apphost/image-download?cbird=111&images_avatars_size=preview&images_avatars_namespace=images-cbir")
+            .openConnection() as HttpURLConnection
+        c.connectTimeout = 15_000
+        c.readTimeout = 40_000
+        c.requestMethod = "POST"
+        c.doOutput = true
+        c.setRequestProperty("User-Agent", UA)
+        c.setRequestProperty("Content-Type", "image/jpeg")
+        c.setRequestProperty("Accept", "application/json, */*")
+        c.setRequestProperty("Referer", "https://$host/images/")
+        c.setRequestProperty("Origin", "https://$host")
+        val body = try {
+            c.outputStream.use { it.write(bytes) }
+            if (c.responseCode !in 200..299) throw IOException("Fehler ${c.responseCode}")
+            c.inputStream.bufferedReader().readText()
+        } finally {
+            c.disconnect()
+        }
+        if (body.contains("captcha", ignoreCase = true) && !body.trimStart().startsWith("{")) throw IOException("verlangt Captcha")
+        val o = runCatching { JSONObject(body) }.getOrNull() ?: throw IOException("unerwartete Antwort: " + body.take(80).replace(Regex("\\s+"), " "))
+        val id = o.optString("image_id")
+        val shard = o.opt("image_shard")?.toString().orEmpty()
+        val url = o.optString("url")
+        if (id.isBlank()) throw IOException("Antwort ohne image_id (Felder: " + o.keys().asSequence().take(8).joinToString(",") + ")")
+        return "https://$host/images/search?rpt=imageview&cbir_id=" + URLEncoder.encode("$shard/$id", "UTF-8") +
+            (if (url.isNotBlank()) "&url=" + URLEncoder.encode(url, "UTF-8") else "")
     }
 
     private fun yandexOn(host: String, image: String): ReverseResult {
@@ -68,9 +110,16 @@ object ReverseImageSearch {
             val obj = runCatching { JSONObject(json) }.getOrNull()
                 ?: throw IOException("$host antwortet nicht im erwarteten Format: " + json.take(80).replace(Regex("\\s+"), " "))
             val params = obj.optJSONArray("blocks")?.optJSONObject(0)?.optJSONObject("params")?.optString("url")
-            if (params.isNullOrBlank()) throw IOException("$host hat das Bild nicht angenommen")
+            if (params.isNullOrBlank()) {
+                throw IOException("Bild nicht angenommen (Antwort-Felder: " + obj.keys().asSequence().take(8).joinToString(",") + ")")
+            }
             "https://$host/images/search?$params"
         }
+        return yandexResults(host, resultUrl)
+    }
+
+    /** Ergebnisseite laden und auswerten */
+    private fun yandexResults(host: String, resultUrl: String): ReverseResult {
         val html = get(resultUrl)
         if (html.contains("showcaptcha") || html.contains("SmartCaptcha")) {
             throw IOException("$host verlangt eine Captcha-Bestätigung (Schutz gegen Apps)")
