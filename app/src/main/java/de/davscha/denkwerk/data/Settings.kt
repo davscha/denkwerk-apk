@@ -51,6 +51,11 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("memoryEnabled", true)
         set(v) = prefs.edit().putBoolean("memoryEnabled", v).apply()
 
+    /** Abgesicherte Suche für Web- und Bildersuche: 0 = Streng (Standard), 1 = Moderat, 2 = Aus */
+    var safeSearch: Int
+        get() = prefs.getInt("safeSearch", 0)
+        set(v) = prefs.edit().putInt("safeSearch", v.coerceIn(0, 2)).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

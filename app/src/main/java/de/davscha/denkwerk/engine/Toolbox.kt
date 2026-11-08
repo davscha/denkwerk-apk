@@ -27,6 +27,8 @@ class Toolbox(
     private val downloadDir: () -> File,
     /** Adresse einer eigenen SearXNG-Suche, leer = DuckDuckGo */
     private val searxngUrl: () -> String,
+    /** Abgesicherte Suche: 0 = Streng, 1 = Moderat, 2 = Aus */
+    private val safeSearch: () -> Int = { 0 },
     /** Wie viele Zeichen einer Webseite höchstens ans Modell gehen */
     private val pageBudget: () -> Int,
     /** Fragt dich, ob gespeichert werden darf (true = ja) */
@@ -206,7 +208,7 @@ class Toolbox(
 
     /** DuckDuckGo-Webseite (ohne Schlüssel). Kann gelegentlich blocken. */
     private fun searchDuckDuckGo(query: String): List<Hit> {
-        val doc = Jsoup.connect("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8") + "&kl=de-de")
+        val doc = Jsoup.connect("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8") + "&kl=de-de&kp=" + ddgKp())
             .userAgent(USER_AGENT)
             .timeout(15_000)
             .get()
@@ -224,7 +226,7 @@ class Toolbox(
     /** Eigene SearXNG-Suche (z. B. im Docker auf dem PC; Format json muss erlaubt sein). */
     private fun searchSearx(query: String): List<Hit> {
         val base = searxngUrl().trim().trimEnd('/')
-        val conn = URL("$base/search?format=json&language=de&q=" + URLEncoder.encode(query, "UTF-8")).openConnection() as HttpURLConnection
+        val conn = URL("$base/search?format=json&language=de&safesearch=${searxSafe()}&q=" + URLEncoder.encode(query, "UTF-8")).openConnection() as HttpURLConnection
         conn.connectTimeout = 8000
         conn.readTimeout = 20_000
         conn.setRequestProperty("User-Agent", USER_AGENT)
@@ -548,10 +550,12 @@ class Toolbox(
     /** DuckDuckGo-Bildersuche: erst ein Schlüssel (vqd) von der Suchseite, dann die Ergebnisse als JSON. */
     private fun searchImagesDdg(query: String): List<de.davscha.denkwerk.data.WebImage> {
         val q = URLEncoder.encode(query, "UTF-8")
-        val html = httpGet("https://duckduckgo.com/?q=$q&iax=images&ia=images", referer = null)
+        val html = httpGet("https://duckduckgo.com/?q=$q&iax=images&ia=images&kp=${ddgKp()}", referer = null)
         val vqd = Regex("vqd=[\"']?([\\d-]+)").find(html)?.groupValues?.get(1)
             ?: throw IOException("Die DuckDuckGo-Bildersuche antwortet gerade nicht")
-        val json = httpGet("https://duckduckgo.com/i.js?l=de-de&o=json&q=$q&vqd=$vqd&f=,,,,,&p=1", referer = "https://duckduckgo.com/")
+        // p: 1 = abgesichert, -1 = aus; kp zusätzlich für Streng/Moderat/Aus
+        val p = if (safeSearch() == 2) "-1" else "1"
+        val json = httpGet("https://duckduckgo.com/i.js?l=de-de&o=json&q=$q&vqd=$vqd&f=,,,,,&p=$p&kp=${ddgKp()}", referer = "https://duckduckgo.com/")
         val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
         return List(arr.length()) { i ->
             val o = arr.getJSONObject(i)
@@ -567,7 +571,7 @@ class Toolbox(
     /** SearXNG-Bildersuche (categories=images) */
     private fun searchImagesSearx(query: String): List<de.davscha.denkwerk.data.WebImage> {
         val base = searxngUrl().trim().trimEnd('/')
-        val json = httpGet("$base/search?format=json&categories=images&q=" + URLEncoder.encode(query, "UTF-8"), referer = null)
+        val json = httpGet("$base/search?format=json&categories=images&safesearch=${searxSafe()}&q=" + URLEncoder.encode(query, "UTF-8"), referer = null)
         val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
         return List(arr.length()) { i ->
             val o = arr.getJSONObject(i)
@@ -579,6 +583,12 @@ class Toolbox(
             )
         }.filter { it.url.startsWith("http") }
     }
+
+    /** DuckDuckGo: kp=1 Streng, kp=-1 Moderat, kp=-2 Aus */
+    private fun ddgKp(): String = when (safeSearch()) { 0 -> "1"; 1 -> "-1"; else -> "-2" }
+
+    /** SearXNG: 2 Streng, 1 Moderat, 0 Aus */
+    private fun searxSafe(): Int = 2 - safeSearch().coerceIn(0, 2)
 
     private fun httpGet(url: String, referer: String?): String {
         val conn = URL(url).openConnection() as HttpURLConnection

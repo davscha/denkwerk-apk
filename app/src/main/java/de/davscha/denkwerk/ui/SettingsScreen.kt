@@ -428,6 +428,24 @@ private fun ToolsSection(vm: AppViewModel) {
             fontSize = 12.sp,
             color = if (ready?.tools == true) Mint else MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // Abgesicherte Suche (wie bei DuckDuckGo)
+        var safe by remember { mutableStateOf(vm.settings.safeSearch) }
+        Text("Abgesicherte Suche", fontSize = 14.sp)
+        Text("Anstößige (meist nicht jugendfreie) Inhalte in Web- und Bildersuche ausblenden", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Streng", "Moderat", "Aus").forEachIndexed { i, label ->
+                val selected = safe == i
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) Mint else MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { safe = i; vm.settings.safeSearch = i }
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                ) {
+                    Text(label, fontSize = 13.sp, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
         OutlinedTextField(
             value = searx,
             onValueChange = { searx = it; vm.settings.searxngUrl = it.trim() },

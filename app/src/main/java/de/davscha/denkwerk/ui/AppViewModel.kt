@@ -257,6 +257,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val toolbox = Toolbox(
         downloadDir = { java.io.File(store.dataDir, "Downloads") },
         searxngUrl = { settings.searxngUrl },
+        safeSearch = { settings.safeSearch },
         pageBudget = { docBudget() },
         confirmDownload = { req ->
             val d = CompletableDeferred<Boolean>()
