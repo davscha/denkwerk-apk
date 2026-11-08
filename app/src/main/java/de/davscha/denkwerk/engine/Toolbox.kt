@@ -43,8 +43,8 @@ class Toolbox(
     private val allowedDirs: () -> List<File> = { emptyList() },
     /** SauceNAO-Schlüssel, leer = Werkzeug nicht anbieten */
     private val sauceNaoKey: () -> String = { "" },
-    /** Bild malen über ComfyUI: (Prompt, Format) → Dateipfad; null = ComfyUI nicht eingerichtet */
-    private val paint: suspend (String, String) -> String = { _, _ -> throw IOException("ComfyUI ist nicht eingerichtet") },
+    /** Bild malen über ComfyUI: (Prompt, Format, gleiches Bild) → (Dateipfad, Hinweis für die Karte) */
+    private val paint: suspend (String, String, Boolean) -> Pair<String, String> = { _, _, _ -> throw IOException("ComfyUI ist nicht eingerichtet") },
     /** true = ComfyUI eingerichtet (Checkpoint gewählt) – nur dann wird bild_malen angeboten */
     private val paintReady: () -> Boolean = { false },
     /** Kurzbeschreibung des Bildrezepts für die Werkzeug-Beschreibung (Checkpoint, LoRAs, Trigger) */
@@ -125,7 +125,10 @@ class Toolbox(
                     JSONObject()
                         .put("prompt", JSONObject().put("type", "string").put("description", "Danbooru-Tags, durch Kommas getrennt"))
                         .put("format", JSONObject().put("type", "string").put("enum", JSONArray(listOf("quadrat", "hoch", "quer", "breit")))
-                            .put("description", "Bildformat (Standard aus den Einstellungen)")),
+                            .put("description", "Bildformat (Standard aus den Einstellungen)"))
+                        .put("gleiches_bild", JSONObject().put("type", "boolean")
+                            .put("description", "true, wenn das zuletzt gemalte Bild nur abgeändert werden soll (gleicher Aufbau, gleicher Seed). " +
+                                "Dann die alten Tags übernehmen und nur die gewünschten Änderungen einbauen.")),
                     required = listOf("prompt"),
                 )
             )
@@ -266,9 +269,10 @@ class Toolbox(
         "tags_pruefen" -> checkTags(args.optString("tags"))
         "bild_malen" -> {
             val start = System.currentTimeMillis()
-            val path = paint(args.optString("prompt"), args.optString("format"))
+            val same = args.optBoolean("gleiches_bild", false) || args.optString("gleiches_bild") == "true"
+            val (path, note) = paint(args.optString("prompt"), args.optString("format"), same)
             val secs = (System.currentTimeMillis() - start) / 1000
-            ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s", images = listOf(path))
+            ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s$note", images = listOf(path))
         }
         "tags_suchen" -> findTags(args.optString("stichwort"))
         "anime_bild_quelle" -> sauceNao(args.optString("bild"))

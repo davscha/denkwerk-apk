@@ -610,6 +610,21 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
         if (!streaming && m.imagePaths.isNotEmpty()) {
             val local = m.imagePaths.map { GalleryImage(url = it, title = File(it).name, local = true) }
             Box(Modifier.padding(top = 8.dp)) { ImageStrip(local, onOpen = { i -> openGallery(local, i) }) }
+            // Gemalte Bilder: Seed anzeigen und per 🔒 festhalten (gleicher Aufbau für die nächsten Bilder)
+            m.imagePaths.mapNotNull { de.davscha.denkwerk.engine.ComfyClient.seedOf(it) }.distinct().forEach { seed ->
+                val locked = vm.seedLock == seed
+                Text(
+                    (if (locked) "🔒 Seed festgehalten" else "🔓 Seed festhalten") + " · $seed",
+                    fontSize = 12.sp,
+                    color = if (locked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (locked) 0.9f else 0.5f))
+                        .clickable { vm.toggleSeedLock(seed) }
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
         }
         if (!streaming && text.isNotEmpty()) {
             Row(

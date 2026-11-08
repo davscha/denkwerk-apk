@@ -161,6 +161,9 @@ class ComfyClient(private val host: String, private val port: Int) {
          * Baut den Workflow (API-Format):
          * Checkpoint → (v-pred-Einstellung) → LoRA → LoRA … → Prompts → KSampler → VAE → Speichern
          */
+        /** Seed aus dem Dateinamen eines gemalten Bildes (bild-<zeit>-s<seed>.png), sonst null */
+        fun seedOf(path: String): Long? = Regex("-s(\\d+)\\.png$").find(path)?.groupValues?.get(1)?.toLongOrNull()
+
         fun buildWorkflow(recipe: ImageRecipe, positive: String, negative: String, format: String, seed: Long): JSONObject {
             val wf = JSONObject()
             var id = 1

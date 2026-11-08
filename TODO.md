@@ -40,3 +40,4 @@
 - [ ] Oberfläche in Deutsch, Englisch, Spanisch, Französisch
 - [ ] OpenAI-kompatible Server (LM Studio, llama.cpp)
 - [x] Bilder malen über ComfyUI (NoobAI, Ordner denkwerk/noobai, Char- und Style-LoRAs)
+- [x] Seed: „das gleiche Bild, aber …“ behält den Seed, 🔒 am Bild hält ihn fest

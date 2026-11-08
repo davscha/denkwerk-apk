@@ -78,6 +78,7 @@ private val KNOWN_TOOLS = setOf(
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
     "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, schreib einen Danbooru-Tag-Prompt und ruf bild_malen auf. " +
+        "Soll das zuletzt gemalte Bild nur geändert werden („das gleiche Bild, aber …“), übernimm die alten Tags, bau die Änderung ein und setze gleiches_bild=true. " +
             "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
         "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
         "Bei Videos wähle die passende Quelle: Dokus/Reportagen/TV-Sendungen → quelle=mediathek, alte Filme/Archivmaterial → archiv. " +
@@ -344,7 +345,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         allowedDirs = { listOf(store.dataDir, context.filesDir, context.cacheDir) },
         sauceNaoKey = { settings.sauceNaoKey },
         videoFilter = { Triple(settings.videoShowYoutube, settings.videoShowSocial, settings.videoBlocked) },
-        paint = { prompt, format -> paintImage(prompt, format) },
+        paint = { prompt, format, same -> paintWithSeed(prompt, format, same) },
         paintReady = { recipe.checkpoint.isNotBlank() },
         recipeInfo = { recipeDescription() },
     )
@@ -419,7 +420,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Malt ein Bild: Ollama-Modell vorher entladen (Grafikspeicher!), Prompt zusammensetzen
      * (Qualitäts-Tags + LoRA-Trigger + Tags), Workflow schicken, Bild speichern. Gibt den Dateipfad zurück.
      */
-    suspend fun paintImage(tags: String, format: String): String {
+    /** Festgehaltener Seed (🔒 am Bild) – solange gesetzt, malen alle Bilder damit */
+    var seedLock by mutableStateOf<Long?>(null)
+        private set
+
+    fun toggleSeedLock(seed: Long) {
+        seedLock = if (seedLock == seed) null else seed
+        toast = if (seedLock != null) "Seed $seed festgehalten – neue Bilder behalten den Aufbau" else "Seed wieder frei – jedes Bild wird neu gewürfelt"
+    }
+
+    /** Letzte Nutzernachricht der laufenden Antwort – erkennt „das gleiche Bild, aber …“ auch ohne Werkzeug-Parameter */
+    private var lastUserText = ""
+
+    private val sameImageWords = Regex(
+        "(gleiche[nms]?|selbe[nms]?|dasselbe|vorige[nms]?|letzte[nms]?|diese[nms]?) (bild|motiv|szene)|dasselbe|änder|nochmal|noch ?mal|stattdessen|" +
+            "\\b(same|previous|last|this) (image|picture|pic)|\\bchange\\b|instead",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Seed des zuletzt im Chat gemalten Bildes (steckt im Dateinamen …-s<seed>.png) */
+    private fun lastPaintedSeed(): Long? =
+        currentChat?.messages.orEmpty().asReversed().flatMap { it.imagePaths.reversed() }.firstNotNullOfOrNull { ComfyClient.seedOf(it) }
+
+    /** Für das Werkzeug: Seed wählen (festgehalten › gleiches Bild › neu) und malen */
+    private suspend fun paintWithSeed(tags: String, format: String, same: Boolean): Pair<String, String> {
+        val reuse = if (same || sameImageWords.containsMatchIn(lastUserText)) lastPaintedSeed() else null
+        val seed = seedLock ?: reuse
+        val note = when {
+            seedLock != null -> " · 🔒 Seed fest"
+            reuse != null -> " · gleicher Seed"
+            else -> ""
+        }
+        return paintImage(tags, format, seed) to note
+    }
+
+    suspend fun paintImage(tags: String, format: String, fixedSeed: Long? = null): String {
         val r = recipe
         if (r.checkpoint.isBlank()) throw java.io.IOException("Kein Checkpoint gewählt (Einstellungen → Bilder malen)")
         withContext(Dispatchers.Main) { paintSeconds = 0 }
@@ -433,7 +468,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val positive = listOf(ComfyClient.NOOBAI_QUALITY, triggers, cleanTags).filter { it.isNotBlank() }.joinToString(", ")
             val negative = (if (r.sfw) "nsfw, " else "") + ComfyClient.NOOBAI_NEGATIVE
             val fmt = format.takeIf { it in setOf("quadrat", "hoch", "quer", "breit") } ?: r.format
-            val wf = ComfyClient.buildWorkflow(r, positive, negative, fmt, (Math.random() * 1e15).toLong())
+            val seed = fixedSeed ?: (Math.random() * 1e15).toLong()
+            val wf = ComfyClient.buildWorkflow(r, positive, negative, fmt, seed)
             val bytes = withContext(Dispatchers.IO) {
                 ComfyClient(settings.comfyHost, settings.comfyPort).run(wf) { s ->
                     viewModelScope.launch(Dispatchers.Main) { paintSeconds = s }
@@ -441,7 +477,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             return withContext(Dispatchers.IO) {
                 val dir = java.io.File(store.dataDir, "Bilder-KI").apply { mkdirs() }
-                val f = java.io.File(dir, "bild-${System.currentTimeMillis()}.png")
+                val f = java.io.File(dir, "bild-${System.currentTimeMillis()}-s$seed.png")
                 f.writeBytes(bytes)
                 f.absolutePath
             }
@@ -465,7 +501,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         upsert(chat.copy(messages = chat.messages + msg))
         viewModelScope.launch {
             val start = System.currentTimeMillis()
-            val result = runCatching { paintImage(prompt, recipe.format) }
+            val result = runCatching { paintImage(prompt, recipe.format, seedLock) }
             val secs = (System.currentTimeMillis() - start) / 1000
             val c = chats.firstOrNull { it.id == chat.id } ?: return@launch
             val done = result.fold(
@@ -852,6 +888,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 "immer das konkrete Datum (z. B. „7. November 2026“)."
         } else withMemory
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
+        lastUserText = userMsg.text
         streamingTools = emptyList()
         streamingWebImages = emptyList()
         streamingWebVideos = emptyList()
