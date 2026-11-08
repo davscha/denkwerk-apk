@@ -295,6 +295,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun imagesInCurrentChat(): List<String> =
         currentChat?.messages.orEmpty().asReversed().flatMap { m -> m.imagePaths.reversed() + m.webImages.map { it.url } }
 
+    /** Neuestes Bild im offenen Chat (für „In Google Lens öffnen“) */
+    fun lastChatImage(): de.davscha.denkwerk.data.WebImage? =
+        imagesInCurrentChat().firstOrNull()?.let { u -> de.davscha.denkwerk.data.WebImage(u, local = !u.startsWith("http")) }
+
     /** Rückwärtssuche aus der Slideshow starten (braucht ein Modell mit Werkzeugen) */
     fun reverseSearch(image: de.davscha.denkwerk.data.WebImage) {
         if (!toolsActive) {

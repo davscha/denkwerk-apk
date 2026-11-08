@@ -33,26 +33,47 @@ object ReverseImageSearch {
 
     // ---------------------------------------------------------------- Yandex
 
-    /** [image] ist entweder eine Datei auf dem Gerät oder eine Web-Adresse. */
+    /**
+     * [image] ist entweder eine Datei auf dem Gerät oder eine Web-Adresse.
+     * Versucht yandex.com und yandex.ru; der Fehler sagt genau, woran es lag.
+     */
     fun yandex(image: String): ReverseResult {
+        var last: Exception? = null
+        for (host in listOf("yandex.com", "yandex.ru")) {
+            try {
+                return yandexOn(host, image)
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw IOException(last?.message ?: "Yandex nicht erreichbar", last)
+    }
+
+    private fun yandexOn(host: String, image: String): ReverseResult {
         val resultUrl = if (image.startsWith("http")) {
-            "https://yandex.com/images/search?rpt=imageview&url=" + URLEncoder.encode(image, "UTF-8")
+            "https://$host/images/search?rpt=imageview&url=" + URLEncoder.encode(image, "UTF-8")
         } else {
             // Bild hochladen – die Antwort enthält die Adresse der Ergebnisseite
             val request = URLEncoder.encode("""{"blocks":[{"block":"b-page_type_search-by-image__link"}]}""", "UTF-8")
             val json = multipart(
-                "https://yandex.com/images/search?rpt=imageview&format=json&request=$request",
+                "https://$host/images/search?rpt=imageview&format=json&request=$request",
                 field = "upfile",
                 fileName = "bild.jpg",
                 bytes = uploadBytes(File(image)),
+                referer = "https://$host/images/",
             )
-            val params = JSONObject(json).optJSONArray("blocks")?.optJSONObject(0)?.optJSONObject("params")?.optString("url")
-            if (params.isNullOrBlank()) throw IOException("Yandex hat das Bild nicht angenommen")
-            "https://yandex.com/images/search?$params"
+            if (json.contains("captcha", ignoreCase = true) && !json.trimStart().startsWith("{")) {
+                throw IOException("$host verlangt eine Captcha-Bestätigung (Schutz gegen Apps)")
+            }
+            val obj = runCatching { JSONObject(json) }.getOrNull()
+                ?: throw IOException("$host antwortet nicht im erwarteten Format: " + json.take(80).replace(Regex("\\s+"), " "))
+            val params = obj.optJSONArray("blocks")?.optJSONObject(0)?.optJSONObject("params")?.optString("url")
+            if (params.isNullOrBlank()) throw IOException("$host hat das Bild nicht angenommen")
+            "https://$host/images/search?$params"
         }
         val html = get(resultUrl)
         if (html.contains("showcaptcha") || html.contains("SmartCaptcha")) {
-            throw IOException("Yandex verlangt gerade eine Captcha-Bestätigung – bitte später nochmal oder Google Lens benutzen")
+            throw IOException("$host verlangt eine Captcha-Bestätigung (Schutz gegen Apps)")
         }
         val doc = Jsoup.parse(html, resultUrl)
         val sites = linkedMapOf<String, ImageSite>()
@@ -162,7 +183,7 @@ object ReverseImageSearch {
         }
     }
 
-    private fun multipart(url: String, field: String, fileName: String, bytes: ByteArray): String {
+    private fun multipart(url: String, field: String, fileName: String, bytes: ByteArray, referer: String? = null): String {
         val boundary = "----Denkwerk" + System.currentTimeMillis()
         val c = URL(url).openConnection() as HttpURLConnection
         c.connectTimeout = 15_000
@@ -171,6 +192,9 @@ object ReverseImageSearch {
         c.doOutput = true
         c.setRequestProperty("User-Agent", UA)
         c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        c.setRequestProperty("Accept", "application/json, text/html;q=0.9, */*;q=0.8")
+        c.setRequestProperty("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+        if (referer != null) c.setRequestProperty("Referer", referer)
         try {
             c.outputStream.use { out ->
                 out.write("--$boundary\r\nContent-Disposition: form-data; name=\"$field\"; filename=\"$fileName\"\r\nContent-Type: image/jpeg\r\n\r\n".toByteArray())

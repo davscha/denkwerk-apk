@@ -552,7 +552,11 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
     Column(Modifier.fillMaxWidth()) {
         if (tools.isNotEmpty()) {
             Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                tools.forEach { t -> ToolCard(t) }
+                tools.forEach { t ->
+                    // Rückwärtssuche gescheitert? Antippen gibt das Bild an Google Lens weiter
+                    val lens = if (t.name == "bild_rueckwaertssuche" && !t.ok && !t.running) vm.lastChatImage() else null
+                    ToolCard(t, onClick = lens?.let { img -> { openInLens(context, img) } })
+                }
             }
         }
         // Gefundene Videos – antippen spielt ab, „Zusammenfassen“ fragt die KI nach dem Inhalt
@@ -650,12 +654,14 @@ private fun SourcesRow(sources: List<de.davscha.denkwerk.data.SourceLink>) {
 
 /** Kärtchen für einen Werkzeug-Aufruf, z. B. „🔍 Websuche · „wetter potsdam“ · 6 Treffer“ */
 @Composable
-private fun ToolCard(t: ToolEvent) {
+private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null) {
     val (icon, label) = Toolbox.label(t.name)
+    Column {
     Row(
         Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 10.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -679,6 +685,15 @@ private fun ToolCard(t: ToolEvent) {
                 modifier = Modifier.widthIn(max = 220.dp),
             )
         }
+    }
+    if (onClick != null) {
+        Text(
+            "→ In Google Lens öffnen",
+            fontSize = 12.sp,
+            color = Mint,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onClick() }.padding(horizontal = 10.dp, vertical = 4.dp),
+        )
+    }
     }
 }
 

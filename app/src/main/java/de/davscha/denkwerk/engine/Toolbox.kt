@@ -714,7 +714,8 @@ class Toolbox(
 
     private fun reverseSearch(arg: String): ToolOutput {
         val image = resolveImage(arg)
-        var r = runCatching { ReverseImageSearch.yandex(image) }.getOrNull()
+        var firstError: Throwable? = null
+        var r = runCatching { ReverseImageSearch.yandex(image) }.onFailure { firstError = it }.getOrNull()
         // Kann Yandex die Adresse nicht selbst laden (z. B. replicate.delivery), Bild hier laden und hochladen
         if ((r == null || (r.sites.isEmpty() && r.similar.isEmpty())) && image.startsWith("http")) {
             val tmp = File.createTempFile("rueck", ".jpg")
@@ -728,7 +729,7 @@ class Toolbox(
                 tmp.delete()
             }
         }
-        if (r == null) throw IOException("Yandex hat keine auswertbare Antwort geliefert")
+        if (r == null) throw IOException("Yandex: " + (firstError?.message ?: "keine auswertbare Antwort"))
         if (r.sites.isEmpty() && r.similar.isEmpty()) {
             return ToolOutput("Die Rückwärtssuche hat nichts gefunden (Ergebnisseite: ${r.resultPage}).", "nichts gefunden", ok = false)
         }
