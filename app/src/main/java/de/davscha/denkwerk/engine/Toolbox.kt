@@ -65,6 +65,17 @@ class Toolbox(
         )
         put(
             spec(
+                "bilder_suchen",
+                "Sucht Bilder im Internet (Bildersuche). Die gefundenen Bilder werden dem Nutzer automatisch als Galerie " +
+                    "mit Slideshow angezeigt. Benutzen, wenn der Nutzer Bilder, Fotos oder Beispiele sehen möchte.",
+                JSONObject()
+                    .put("anfrage", JSONObject().put("type", "string").put("description", "Suchbegriffe, z. B. \"rote Katze Kätzchen\""))
+                    .put("anzahl", JSONObject().put("type", "integer").put("description", "Wie viele Bilder (1 bis 12, Standard 6)")),
+                required = listOf("anfrage"),
+            )
+        )
+        put(
+            spec(
                 "bilder_auf_seite",
                 "Listet die Bilder einer Webseite mit Adresse und Beschreibung auf (ohne kleine Symbole und Logos).",
                 props("url" to "Vollständige Adresse mit https://"),
@@ -93,6 +104,7 @@ class Toolbox(
         "web_suche" -> search(args.optString("anfrage"))
         "seite_lesen" -> readPage(args.optString("url"))
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
+        "bilder_suchen" -> searchImages(args.optString("anfrage"), args.optInt("anzahl", 6).coerceIn(1, 12))
         "herunterladen" -> download(args)
         else -> ToolOutput("Unbekanntes Werkzeug: $name", "unbekanntes Werkzeug", ok = false)
     }
@@ -208,8 +220,81 @@ class Toolbox(
         }
         if (found.isEmpty()) return ToolOutput("Keine passenden Bilder auf ${doc.location()} gefunden.", "keine Bilder gefunden")
         val list = found.entries.take(25).mapIndexed { i, (src, alt) -> "${i + 1}. $src" + (if (alt.isNotBlank()) " – $alt" else "") }
-        return ToolOutput("Bilder auf ${doc.location()}:\n" + list.joinToString("\n"), "${list.size} Bilder gefunden")
+        val gallery = found.entries.take(12).map { (src, alt) -> de.davscha.denkwerk.data.WebImage(src, title = alt, source = doc.location()) }
+        return ToolOutput(
+            "Bilder auf ${doc.location()} (die ersten ${gallery.size} werden dem Nutzer bereits als Galerie angezeigt):\n" + list.joinToString("\n"),
+            "${list.size} Bilder gefunden",
+            webImages = gallery,
+        )
     }
+
+    // ---------- Bildersuche ----------
+
+    private fun searchImages(query: String, count: Int): ToolOutput {
+        if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
+        val found = (if (searxngUrl().isNotBlank()) searchImagesSearx(query) else searchImagesDdg(query)).take(count)
+        if (found.isEmpty()) return ToolOutput("Keine Bilder für „$query“ gefunden.", "„$query“ · keine Bilder")
+        val list = found.mapIndexed { i, w -> "${i + 1}. ${w.title} – ${w.url} (Seite: ${w.source})" }.joinToString("\n")
+        return ToolOutput(
+            "Bilder für „$query“ – sie werden dem Nutzer bereits als Galerie mit Slideshow angezeigt. " +
+                "Beschreibe kurz, was zu sehen ist, und liste die Bilder NICHT noch einmal als Links auf:\n$list",
+            "„$query“ · ${found.size} Bilder",
+            webImages = found,
+        )
+    }
+
+    /** DuckDuckGo-Bildersuche: erst ein Schlüssel (vqd) von der Suchseite, dann die Ergebnisse als JSON. */
+    private fun searchImagesDdg(query: String): List<de.davscha.denkwerk.data.WebImage> {
+        val q = URLEncoder.encode(query, "UTF-8")
+        val html = httpGet("https://duckduckgo.com/?q=$q&iax=images&ia=images", referer = null)
+        val vqd = Regex("vqd=[\"']?([\\d-]+)").find(html)?.groupValues?.get(1)
+            ?: throw IOException("Die DuckDuckGo-Bildersuche antwortet gerade nicht")
+        val json = httpGet("https://duckduckgo.com/i.js?l=de-de&o=json&q=$q&vqd=$vqd&f=,,,,,&p=1", referer = "https://duckduckgo.com/")
+        val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            de.davscha.denkwerk.data.WebImage(
+                url = o.optString("image"),
+                thumb = o.optString("thumbnail"),
+                title = o.optString("title"),
+                source = o.optString("url"),
+            )
+        }.filter { it.url.startsWith("http") }
+    }
+
+    /** SearXNG-Bildersuche (categories=images) */
+    private fun searchImagesSearx(query: String): List<de.davscha.denkwerk.data.WebImage> {
+        val base = searxngUrl().trim().trimEnd('/')
+        val json = httpGet("$base/search?format=json&categories=images&q=" + URLEncoder.encode(query, "UTF-8"), referer = null)
+        val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            de.davscha.denkwerk.data.WebImage(
+                url = o.optString("img_src"),
+                thumb = o.optString("thumbnail_src"),
+                title = o.optString("title"),
+                source = o.optString("url"),
+            )
+        }.filter { it.url.startsWith("http") }
+    }
+
+    private fun httpGet(url: String, referer: String?): String {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        conn.setRequestProperty("Accept-Language", "de-DE,de;q=0.9")
+        if (referer != null) conn.setRequestProperty("Referer", referer)
+        try {
+            if (conn.responseCode !in 200..299) throw IOException("Fehler ${conn.responseCode} von ${URL(url).host}")
+            return conn.inputStream.bufferedReader().readText()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Ein Bild direkt speichern (z. B. aus der Slideshow – du hast selbst getippt, keine Rückfrage nötig). */
+    fun saveUrl(url: String): File = downloadOne(url)
 
     private suspend fun download(args: JSONObject): ToolOutput {
         val arr = args.optJSONArray("urls")
@@ -322,7 +407,8 @@ class Toolbox(
             "rechnen" -> "🧮" to "Rechner"
             "web_suche" -> "🔍" to "Websuche"
             "seite_lesen" -> "📄" to "Seite gelesen"
-            "bilder_auf_seite" -> "🖼️" to "Bilder gesucht"
+            "bilder_auf_seite" -> "🖼️" to "Bilder auf Seite"
+            "bilder_suchen" -> "🖼️" to "Bildersuche"
             "herunterladen" -> "⬇️" to "Herunterladen"
             else -> "🔧" to name
         }

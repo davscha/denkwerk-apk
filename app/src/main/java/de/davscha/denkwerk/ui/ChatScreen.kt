@@ -73,6 +73,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -120,6 +121,13 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
         editingId = null
     }
 
+    // Slideshow für alle Bilder im Chat
+    var gallery by remember { mutableStateOf<Pair<List<GalleryImage>, Int>?>(null) }
+    gallery?.let { (imgs, start) ->
+        SlideshowDialog(imgs, start, onDismiss = { gallery = null }, onSave = { vm.saveWebImage(it.url) })
+    }
+
+    CompositionLocalProvider(LocalOpenGallery provides { imgs, i -> gallery = imgs to i }) {
     Column(Modifier.fillMaxSize().imePadding()) {
         TopBar(vm, onMenu)
 
@@ -201,6 +209,7 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
                 docs = emptyList()
             },
         )
+    }
     }
 }
 
@@ -456,18 +465,20 @@ private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit, on
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         if (m.imagePaths.isNotEmpty()) {
-            // Ein Bild groß, mehrere als waagerecht wischbare Reihe
+            // Ein Bild groß, mehrere als waagerecht wischbare Reihe – Antippen öffnet die Slideshow
+            val openGallery = LocalOpenGallery.current
             val side = if (m.imagePaths.size == 1) 180.dp else 120.dp
+            val local = m.imagePaths.map { GalleryImage(url = it, title = File(it).name, local = true) }
             Row(
                 Modifier.padding(bottom = 6.dp).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                m.imagePaths.forEach { path ->
+                m.imagePaths.forEachIndexed { i, path ->
                     AsyncImage(
                         model = File(path),
                         contentDescription = "Angehängtes Bild",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(side).clip(RoundedCornerShape(14.dp)),
+                        modifier = Modifier.size(side).clip(RoundedCornerShape(14.dp)).clickable { openGallery(local, i) },
                     )
                 }
             }
@@ -528,11 +539,17 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
         }
     }
     val tools = if (streaming) vm.streamingTools else m.toolEvents
+    val webImages = if (streaming) vm.streamingWebImages else m.webImages
+    val openGallery = LocalOpenGallery.current
     Column(Modifier.fillMaxWidth()) {
         if (tools.isNotEmpty()) {
             Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 tools.forEach { t -> ToolCard(t) }
             }
+        }
+        // Gefundene Bilder aus dem Web – direkt sichtbar, Antippen öffnet die Slideshow
+        if (webImages.isNotEmpty()) {
+            Box(Modifier.padding(bottom = 10.dp)) { ImageStrip(webImages, onOpen = { i -> openGallery(webImages, i) }) }
         }
         when {
             streaming && text.isEmpty() && tools.none { it.running } -> TypingDots()
@@ -540,21 +557,10 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
             else -> MarkdownText(text)
         }
-        // Heruntergeladene Bilder
+        // Heruntergeladene Bilder (auf dem Gerät)
         if (!streaming && m.imagePaths.isNotEmpty()) {
-            Row(
-                Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                m.imagePaths.forEach { path ->
-                    AsyncImage(
-                        model = File(path),
-                        contentDescription = "Heruntergeladenes Bild",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(if (m.imagePaths.size == 1) 220.dp else 140.dp).clip(RoundedCornerShape(14.dp)),
-                    )
-                }
-            }
+            val local = m.imagePaths.map { GalleryImage(url = it, title = File(it).name, local = true) }
+            Box(Modifier.padding(top = 8.dp)) { ImageStrip(local, onOpen = { i -> openGallery(local, i) }) }
         }
         if (!streaming && text.isNotEmpty()) {
             Row(

@@ -66,7 +66,9 @@ data class ModelChoice(val source: Source, val id: String, val title: String, va
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, seite_lesen, bilder_auf_seite und herunterladen. " +
+    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite und herunterladen. " +
+        "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
+        "also keine Linkliste dazu schreiben. " +
         "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
         "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
         "herunterladen nur, wenn der Nutzer ausdrücklich Dateien oder Bilder speichern möchte. " +
@@ -202,6 +204,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Werkzeug-Kärtchen der Antwort, die gerade entsteht */
     var streamingTools by mutableStateOf<List<ToolEvent>>(emptyList())
         private set
+
+    /** Bilder aus der Bildersuche der Antwort, die gerade entsteht */
+    var streamingWebImages by mutableStateOf<List<de.davscha.denkwerk.data.WebImage>>(emptyList())
+        private set
+
+    /** Bild aus der Slideshow speichern (du hast selbst getippt – keine Rückfrage) */
+    fun saveWebImage(url: String) {
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { toolbox.saveUrl(url) } }
+            toast = r.fold({ "Gespeichert: Denkwerk/Downloads/${it.name}" }, { "Speichern fehlgeschlagen: ${it.message}" })
+        }
+    }
 
     /** Wartende Rückfrage „Dateien speichern?“ */
     class DownloadConfirm(val request: DownloadRequest, val answer: CompletableDeferred<Boolean>)
@@ -520,6 +534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val systemPrompt = if (useTools) basePrompt + "\n\n" + TOOL_HINT else basePrompt
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
         streamingTools = emptyList()
+        streamingWebImages = emptyList()
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
         stopRequested = false
@@ -572,6 +587,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 val doneEv = ToolEvent(ev.name, streamingTools.getOrNull(i)?.detail.orEmpty(), ev.output.summary, ev.output.ok)
                                 streamingTools = if (i >= 0) streamingTools.toMutableList().also { it[i] = doneEv } else streamingTools + doneEv
                                 toolImages += ev.output.images
+                                streamingWebImages = streamingWebImages + ev.output.webImages
                             }
                         }
                     }
@@ -602,6 +618,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     isError = error != null && finalText.isBlank() && streamingTools.isEmpty(),
                     toolEvents = streamingTools.map { if (it.running) it.copy(running = false, summary = "abgebrochen", ok = false) else it },
                     imagePaths = toolImages.toList(),
+                    webImages = streamingWebImages.distinctBy { it.url },
                 )
                 if (previousVariants.isNotEmpty()) {
                     val all = previousVariants + done.asVariant()
@@ -613,6 +630,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 streamingId = null
                 streamingText = ""
                 streamingTools = emptyList()
+                streamingWebImages = emptyList()
                 answerDownload(false)
                 generating = false
                 generateJob = null

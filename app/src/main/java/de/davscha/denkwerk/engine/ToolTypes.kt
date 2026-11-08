@@ -11,6 +11,8 @@ data class ToolOutput(
     val ok: Boolean = true,
     /** Heruntergeladene Bilder (werden im Chat gezeigt) */
     val images: List<String> = emptyList(),
+    /** Gefundene Bilder aus dem Web (Galerie/Slideshow im Chat) */
+    val webImages: List<de.davscha.denkwerk.data.WebImage> = emptyList(),
 )
 
 /** Was beim Antworten mit Werkzeugen passiert – Text oder ein Werkzeug-Aufruf. */

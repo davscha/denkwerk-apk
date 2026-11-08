@@ -41,6 +41,9 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -55,12 +58,29 @@ private sealed interface Block {
     data class Code(val language: String, val code: String) : Block
     data class Table(val lines: List<String>) : Block
     data object Rule : Block
+    /** Bilder aus ![Beschreibung](Adresse) */
+    data class Images(val images: List<GalleryImage>) : Block
+}
+
+/** ![Beschreibung](Adresse) */
+private val IMAGE_MD = Regex("!\\[([^\\]]*)]\\((\\S+?)(?:\\s+\"[^\"]*\")?\\)")
+private const val IMG_MARK = "\u0000IMG"
+
+/** Zieht Bilder aus einer Zeile heraus: Zeile ohne Bilder + eine Markierungszeile dahinter. */
+private fun splitImages(lines: List<String>): List<String> = lines.flatMap { line ->
+    val found = IMAGE_MD.findAll(line).toList()
+    if (found.isEmpty()) listOf(line)
+    else {
+        val rest = line.replace(IMAGE_MD, "").let { if (it.isBlank()) null else it }
+        val marker = IMG_MARK + found.joinToString("\u0002") { it.groupValues[1] + "\u0001" + it.groupValues[2] }
+        listOfNotNull(rest, marker)
+    }
 }
 
 /** Zerlegt Markdown in Blöcke. Ein noch offener Code-Block (beim Mitschreiben) zählt schon als Code. */
 private fun parseBlocks(md: String): List<Block> {
     val blocks = mutableListOf<Block>()
-    val lines = md.replace("\r", "").split("\n")
+    val lines = splitImages(md.replace("\r", "").split("\n"))
     val paragraph = StringBuilder()
     fun flush() {
         if (paragraph.isNotBlank()) blocks += Block.Paragraph(paragraph.toString().trim())
@@ -72,6 +92,18 @@ private fun parseBlocks(md: String): List<Block> {
         val trimmed = line.trimStart()
         val indent = (line.length - trimmed.length) / 2
         when {
+            line.startsWith(IMG_MARK) -> {
+                flush()
+                val imgs = line.removePrefix(IMG_MARK).split('\u0002').map { part ->
+                    GalleryImage(url = part.substringAfter('\u0001'), title = part.substringBefore('\u0001'))
+                }.filter { it.url.startsWith("http") }
+                if (imgs.isNotEmpty()) {
+                    // Direkt aufeinanderfolgende Bilder zu einer Reihe zusammenfassen
+                    val prev = blocks.lastOrNull()
+                    if (prev is Block.Images) blocks[blocks.lastIndex] = Block.Images(prev.images + imgs)
+                    else blocks += Block.Images(imgs)
+                }
+            }
             trimmed.startsWith("```") -> {
                 flush()
                 val lang = trimmed.removePrefix("```").trim()
@@ -127,9 +159,11 @@ private fun parseBlocks(md: String): List<Block> {
     return blocks
 }
 
-/** **fett**, *kursiv*, `Code`, ~~durchgestrichen~~ und [Links](url) als formatierter Text. */
+private val linkStyle = TextLinkStyles(SpanStyle(color = Color(0xFF7FD8FF), textDecoration = TextDecoration.Underline))
+
+/** **fett**, *kursiv*, `Code`, ~~durchgestrichen~~, [Links](url) und nackte https://-Adressen – Links sind antippbar. */
 fun inlineMarkdown(text: String, codeBackground: Color): AnnotatedString = buildAnnotatedString {
-    val pattern = Regex("(\\*\\*[^*]+\\*\\*|__[^_]+__|`[^`]+`|~~[^~]+~~|\\*[^*\\s][^*]*\\*|\\[[^\\]]+]\\([^)]+\\))")
+    val pattern = Regex("(\\*\\*[^*]+\\*\\*|__[^_]+__|`[^`]+`|~~[^~]+~~|\\*[^*\\s][^*]*\\*|\\[[^\\]]+]\\([^)\\s]+\\)|https?://[^\\s)\\]>\"]+)")
     var last = 0
     for (m in pattern.findAll(text)) {
         append(text.substring(last, m.range.first))
@@ -145,7 +179,14 @@ fun inlineMarkdown(text: String, codeBackground: Color): AnnotatedString = build
                 withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(t.substring(2, t.length - 2)) }
             t.startsWith("[") -> {
                 val label = t.substring(1, t.indexOf("]("))
-                withStyle(SpanStyle(color = Color(0xFF7FD8FF), textDecoration = TextDecoration.Underline)) { append(label) }
+                val url = t.substring(t.indexOf("](") + 2, t.length - 1)
+                withLink(LinkAnnotation.Url(url, linkStyle)) { append(label) }
+            }
+            t.startsWith("http") -> {
+                // Satzzeichen am Ende gehören nicht zur Adresse
+                val url = t.trimEnd('.', ',', ';', ':', '!', '?')
+                withLink(LinkAnnotation.Url(url, linkStyle)) { append(url) }
+                append(t.substring(url.length))
             }
             else -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(t.substring(1, t.length - 1)) }
         }
@@ -156,8 +197,14 @@ fun inlineMarkdown(text: String, codeBackground: Color): AnnotatedString = build
 
 /** Zeigt eine KI-Antwort mit Markdown an. */
 @Composable
-fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
+fun MarkdownText(
+    markdown: String,
+    modifier: Modifier = Modifier,
+    /** Bild angetippt: alle Bilder dieser Reihe + Position (für die Slideshow) */
+    onOpenImages: ((List<GalleryImage>, Int) -> Unit)? = null,
+) {
     val blocks = remember(markdown) { parseBlocks(markdown) }
+    val openGallery = onOpenImages ?: LocalOpenGallery.current
     val codeBg = MaterialTheme.colorScheme.surfaceVariant
     val body = MaterialTheme.typography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -198,6 +245,7 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
                         .padding(10.dp),
                 )
                 Block.Rule -> HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                is Block.Images -> ImageStrip(b.images, onOpen = { i -> openGallery(b.images, i) })
             }
         }
     }
