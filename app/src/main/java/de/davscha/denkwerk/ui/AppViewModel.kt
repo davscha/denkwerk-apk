@@ -67,13 +67,15 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
-    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
+    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite, webseite_durchsuchen, auf_seite_suchen und herunterladen. " +
+    "Für Videos nutze videos_suchen (erscheinen automatisch als Kärtchen); soll ein YouTube-Video zusammengefasst oder " +
+        "erklärt werden, nutze video_verstehen mit dessen Adresse. " +
+        "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, videos_suchen, video_verstehen, seite_lesen, bilder_auf_seite, webseite_durchsuchen, auf_seite_suchen und herunterladen. " +
         "Soll auf einer bestimmten Webseite nach etwas Bestimmtem gesucht werden, nutze zuerst auf_seite_suchen (benutzt das Suchfeld der Seite); " +
         "findet das nichts, nimm webseite_durchsuchen. " +
         "Nennt der Nutzer eine Webseite und sucht Infos oder Bilder darauf, nutze webseite_durchsuchen – es durchsucht auch die Unterseiten, " +
@@ -220,6 +222,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Bilder aus der Bildersuche der Antwort, die gerade entsteht */
     var streamingWebImages by mutableStateOf<List<de.davscha.denkwerk.data.WebImage>>(emptyList())
+        private set
+    var streamingWebVideos by mutableStateOf<List<de.davscha.denkwerk.data.WebVideo>>(emptyList())
         private set
 
     /** Bild aus der Slideshow speichern (du hast selbst getippt – keine Rückfrage) */
@@ -619,6 +623,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
         streamingTools = emptyList()
         streamingWebImages = emptyList()
+        streamingWebVideos = emptyList()
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
         stopRequested = false
@@ -676,6 +681,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 streamingTools = if (i >= 0) streamingTools.toMutableList().also { it[i] = doneEv } else streamingTools + doneEv
                                 toolImages += ev.output.images
                                 streamingWebImages = streamingWebImages + ev.output.webImages
+                                streamingWebVideos = streamingWebVideos + ev.output.webVideos
                             }
                         }
                     }
@@ -707,6 +713,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     toolEvents = streamingTools.map { if (it.running) it.copy(running = false, summary = "abgebrochen", ok = false) else it },
                     imagePaths = toolImages.toList(),
                     webImages = streamingWebImages.distinctBy { it.url },
+                    webVideos = streamingWebVideos.distinctBy { it.url },
                 )
                 if (previousVariants.isNotEmpty()) {
                     val all = previousVariants + done.asVariant()
@@ -719,6 +726,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 streamingText = ""
                 streamingTools = emptyList()
                 streamingWebImages = emptyList()
+                streamingWebVideos = emptyList()
                 answerDownload(false)
                 generating = false
                 generateJob = null
@@ -757,7 +765,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
-        "web_suche" -> args.optString("anfrage")
+        "web_suche", "videos_suchen" -> args.optString("anfrage")
+        "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
         "auf_seite_suchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +
             " · „" + args.optString("suche") + "“"
         "webseite_durchsuchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +

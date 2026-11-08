@@ -540,11 +540,18 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
     }
     val tools = if (streaming) vm.streamingTools else m.toolEvents
     val webImages = if (streaming) vm.streamingWebImages else m.webImages
+    val webVideos = if (streaming) vm.streamingWebVideos else m.webVideos
     val openGallery = LocalOpenGallery.current
     Column(Modifier.fillMaxWidth()) {
         if (tools.isNotEmpty()) {
             Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 tools.forEach { t -> ToolCard(t) }
+            }
+        }
+        // Gefundene Videos – antippen spielt ab, „Zusammenfassen“ fragt die KI nach dem Inhalt
+        if (webVideos.isNotEmpty()) {
+            Box(Modifier.padding(bottom = 10.dp)) {
+                VideoStrip(webVideos, onSummarize = if (vm.generating) null else { v -> vm.send("Fasse dieses Video kurz zusammen: ${v.url}") })
             }
         }
         // Gefundene Bilder aus dem Web – direkt sichtbar, Antippen öffnet die Slideshow

@@ -20,6 +20,7 @@
 - [x] Gedächtnis: Fakten über dich in jedem Chat, Werkzeuge merken / vergessen, „Merk dir …“ ohne Tools
 - [ ] ComfyUI-Bild malen als Werkzeug
 - [ ] Timer, Wecker, Kalender
+- [x] Videosuche mit Kärtchen + YouTube-Videos über Untertitel verstehen
 - [ ] Python auf dem PC ausführen
 
 ## Als Nächstes

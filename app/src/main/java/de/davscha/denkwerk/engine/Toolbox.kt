@@ -82,6 +82,27 @@ class Toolbox(
         )
         put(
             spec(
+                "videos_suchen",
+                "Sucht Videos im Internet (vor allem YouTube). Die Videos werden dem Nutzer automatisch als Kärtchen mit Vorschaubild angezeigt.",
+                JSONObject()
+                    .put("anfrage", JSONObject().put("type", "string").put("description", "Suchbegriffe"))
+                    .put("anzahl", JSONObject().put("type", "integer").put("description", "Wie viele Videos (1 bis 10, Standard 5)"))
+                    .put("dauer", JSONObject().put("type", "string").put("enum", JSONArray(listOf("egal", "kurz", "mittel", "lang")))
+                        .put("description", "kurz = unter 4 Min., mittel = 4–20 Min., lang = über 20 Min."))
+                    .put("neueste", JSONObject().put("type", "boolean").put("description", "true = nur aus dem letzten Monat, neueste zuerst")),
+                required = listOf("anfrage"),
+            )
+        )
+        put(
+            spec(
+                "video_verstehen",
+                "Liest Titel, Beschreibung und Untertitel eines YouTube-Videos, damit du es zusammenfassen oder Fragen dazu beantworten kannst.",
+                props("url" to "YouTube-Adresse des Videos"),
+                required = listOf("url"),
+            )
+        )
+        put(
+            spec(
                 "auf_seite_suchen",
                 "Benutzt die eingebaute Suchfunktion (Suchfeld) einer Webseite und liefert die Treffer; die ersten Treffer werden auf Wunsch " +
                     "gleich gelesen. Benutzen, wenn der Nutzer auf einer bestimmten Webseite etwas suchen möchte (z. B. Shop, Forum, Wiki, Nachrichtenseite).",
@@ -154,6 +175,13 @@ class Toolbox(
         "web_suche" -> search(args.optString("anfrage"))
         "seite_lesen" -> readPage(args.optString("url"))
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
+        "videos_suchen" -> searchVideos(
+            args.optString("anfrage"),
+            args.optInt("anzahl", 5).coerceIn(1, 10),
+            args.optString("dauer"),
+            args.optBoolean("neueste", false) || args.optString("neueste") == "true",
+        )
+        "video_verstehen" -> videoTranscript(args.optString("url"))
         "auf_seite_suchen" -> siteSearch(
             args.optString("url"),
             args.optString("suche"),
@@ -532,6 +560,140 @@ class Toolbox(
     private fun canonical(u: String): String =
         u.lowercase().replace("://www.", "://").substringBefore("?utm_").trimEnd('/')
 
+    // ---------- Videosuche ----------
+
+    private fun searchVideos(query: String, count: Int, duration: String, newest: Boolean): ToolOutput {
+        if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
+        var found = if (searxngUrl().isNotBlank()) searchVideosSearx(query) else searchVideosDdg(query, duration, newest)
+        if (newest) found = found.sortedByDescending { it.published }
+        found = found.take(count)
+        if (found.isEmpty()) return ToolOutput("Keine Videos für „$query“ gefunden.", "„$query“ · keine Videos")
+        val list = found.mapIndexed { i, v ->
+            "${i + 1}. ${v.title} – ${v.publisher}, ${v.duration}${if (v.published.isNotBlank()) ", ${v.published}" else ""} – ${v.url}"
+        }.joinToString("\n")
+        return ToolOutput(
+            "Videos für „$query“ – sie werden dem Nutzer bereits als Video-Kärtchen angezeigt (antippen spielt ab). " +
+                "Beschreibe kurz, was dabei ist, ohne die Links noch einmal aufzulisten:\n$list",
+            "„$query“ · ${found.size} Videos",
+            webVideos = found,
+        )
+    }
+
+    /** DuckDuckGo-Videosuche: wie die Bildersuche, nur mit v.js */
+    private fun searchVideosDdg(query: String, duration: String, newest: Boolean): List<de.davscha.denkwerk.data.WebVideo> {
+        val q = URLEncoder.encode(query, "UTF-8")
+        val html = httpGet("https://duckduckgo.com/?q=$q&iax=videos&ia=videos&kp=${ddgKp()}", referer = null)
+        val vqd = Regex("vqd=[\"']?([\\d-]+)").find(html)?.groupValues?.get(1)
+            ?: throw IOException("Die DuckDuckGo-Videosuche antwortet gerade nicht")
+        val dur = when (duration) { "kurz" -> "videoDuration:short"; "mittel" -> "videoDuration:medium"; "lang" -> "videoDuration:long"; else -> "" }
+        val time = if (newest) "publishedAfter:m" else ""
+        val f = URLEncoder.encode("$time,,$dur,", "UTF-8")
+        val p = if (safeSearch() == 2) "-1" else "1"
+        val json = httpGet("https://duckduckgo.com/v.js?l=de-de&o=json&q=$q&vqd=$vqd&f=$f&p=$p&kp=${ddgKp()}", referer = "https://duckduckgo.com/")
+        val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            val imgs = o.optJSONObject("images")
+            de.davscha.denkwerk.data.WebVideo(
+                url = o.optString("content"),
+                title = o.optString("title"),
+                thumb = imgs?.optString("large")?.ifBlank { null } ?: imgs?.optString("medium").orEmpty(),
+                duration = o.optString("duration"),
+                publisher = o.optString("uploader").ifBlank { o.optString("publisher") },
+                published = o.optString("published").take(10),
+            )
+        }.filter { it.url.startsWith("http") }
+    }
+
+    private fun searchVideosSearx(query: String): List<de.davscha.denkwerk.data.WebVideo> {
+        val base = searxngUrl().trim().trimEnd('/')
+        val json = httpGet("$base/search?format=json&categories=videos&safesearch=${searxSafe()}&q=" + URLEncoder.encode(query, "UTF-8"), referer = null)
+        val arr = JSONObject(json).optJSONArray("results") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            de.davscha.denkwerk.data.WebVideo(
+                url = o.optString("url"),
+                title = o.optString("title"),
+                thumb = o.optString("thumbnail"),
+                duration = o.optString("length"),
+                publisher = o.optString("author"),
+                published = o.optString("publishedDate").take(10),
+            )
+        }.filter { it.url.startsWith("http") }
+    }
+
+    // ---------- YouTube-Video über Untertitel verstehen ----------
+
+    /**
+     * Holt Titel, Kanal, Beschreibung und – falls vorhanden – die Untertitel eines YouTube-Videos
+     * (Deutsch bevorzugt, sonst Englisch, sonst automatisch erzeugte).
+     */
+    private fun videoTranscript(url: String): ToolOutput {
+        val id = youtubeId(url) ?: return ToolOutput("Das ist kein YouTube-Video – nur YouTube-Untertitel werden unterstützt.", "kein YouTube-Link", ok = false)
+        val conn = URL("https://www.youtube.com/watch?v=$id&hl=de").openConnection() as HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 20_000
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        conn.setRequestProperty("Accept-Language", "de-DE,de;q=0.9")
+        // Zustimmungs-Seite überspringen
+        conn.setRequestProperty("Cookie", "CONSENT=YES+1; SOCS=CAI")
+        val html = try {
+            if (conn.responseCode !in 200..299) throw IOException("YouTube antwortet mit Fehler ${conn.responseCode}")
+            conn.inputStream.bufferedReader().readText()
+        } finally {
+            conn.disconnect()
+        }
+        val player = Regex("ytInitialPlayerResponse\\s*=\\s*(\\{.+?\\});\\s*(?:var|</script>)", RegexOption.DOT_MATCHES_ALL).find(html)
+            ?.groupValues?.get(1)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            ?: throw IOException("Video-Infos konnten nicht gelesen werden")
+        val details = player.optJSONObject("videoDetails")
+        val title = details?.optString("title").orEmpty()
+        val channel = details?.optString("author").orEmpty()
+        val seconds = details?.optString("lengthSeconds")?.toIntOrNull() ?: 0
+        val description = details?.optString("shortDescription").orEmpty()
+
+        val tracks = player.optJSONObject("captions")?.optJSONObject("playerCaptionsTracklistRenderer")?.optJSONArray("captionTracks")
+        val all = if (tracks == null) emptyList() else List(tracks.length()) { tracks.getJSONObject(it) }
+        fun pick(lang: String, auto: Boolean) = all.firstOrNull { it.optString("languageCode").startsWith(lang) && (it.optString("kind") == "asr") == auto }
+        val track = pick("de", false) ?: pick("de", true) ?: pick("en", false) ?: pick("en", true) ?: all.firstOrNull()
+
+        var transcript = ""
+        if (track != null) {
+            transcript = runCatching {
+                val xml = httpGet(track.optString("baseUrl"), referer = "https://www.youtube.com/")
+                Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser()).select("text")
+                    .joinToString(" ") { org.jsoup.parser.Parser.unescapeEntities(it.text(), false) }
+                    .replace(Regex("\\s+"), " ").trim()
+            }.getOrDefault("")
+        }
+        val budget = pageBudget()
+        val cut = transcript.length > budget
+        val minutes = "${seconds / 60}:${"%02d".format(seconds % 60)}"
+        val forModel = buildString {
+            append("Video: $title\nKanal: $channel\nLänge: $minutes\nAdresse: https://www.youtube.com/watch?v=$id\n\n")
+            append("Beschreibung:\n${description.take(1500)}\n\n")
+            if (transcript.isNotBlank()) {
+                append("Untertitel (${track?.optString("languageCode")}${if (track?.optString("kind") == "asr") ", automatisch erzeugt" else ""}):\n")
+                append(transcript.take(budget))
+                if (cut) append("\n[… gekürzt, ${transcript.length} Zeichen insgesamt]")
+            } else {
+                append("Für dieses Video gibt es keine abrufbaren Untertitel – nur Titel und Beschreibung sind bekannt.")
+            }
+        }
+        val video = de.davscha.denkwerk.data.WebVideo(
+            url = "https://www.youtube.com/watch?v=$id",
+            title = title,
+            thumb = "https://i.ytimg.com/vi/$id/hqdefault.jpg",
+            duration = minutes,
+            publisher = channel,
+        )
+        val summary = if (transcript.isNotBlank()) "Untertitel gelesen" + (if (cut) " · gekürzt" else "") else "keine Untertitel – nur Beschreibung"
+        return ToolOutput(forModel, summary, ok = true, webVideos = listOf(video))
+    }
+
+    private fun youtubeId(url: String): String? =
+        Regex("(?:youtube\\.com/(?:watch\\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\\.be/)([A-Za-z0-9_-]{11})").find(url)?.groupValues?.get(1)
+
     // ---------- Bildersuche ----------
 
     private fun searchImages(query: String, count: Int): ToolOutput {
@@ -723,6 +885,8 @@ class Toolbox(
             "bilder_suchen" -> "🖼️" to "Bildersuche"
             "webseite_durchsuchen" -> "🕸️" to "Webseite durchsucht"
             "auf_seite_suchen" -> "🔎" to "Seitensuche"
+            "videos_suchen" -> "🎬" to "Videosuche"
+            "video_verstehen" -> "📺" to "Video angeschaut"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"
             "vergessen" -> "🧹" to "Vergessen"

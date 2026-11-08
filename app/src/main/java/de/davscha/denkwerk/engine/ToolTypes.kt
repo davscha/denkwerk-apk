@@ -13,6 +13,8 @@ data class ToolOutput(
     val images: List<String> = emptyList(),
     /** Gefundene Bilder aus dem Web (Galerie/Slideshow im Chat) */
     val webImages: List<de.davscha.denkwerk.data.WebImage> = emptyList(),
+    /** Gefundene Videos (Video-Kärtchen im Chat) */
+    val webVideos: List<de.davscha.denkwerk.data.WebVideo> = emptyList(),
 )
 
 /** Was beim Antworten mit Werkzeugen passiert – Text oder ein Werkzeug-Aufruf. */

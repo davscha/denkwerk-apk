@@ -35,6 +35,29 @@ data class WebImage(
     }
 }
 
+/** Ein gefundenes Video (Videosuche) */
+data class WebVideo(
+    val url: String,
+    val title: String = "",
+    val thumb: String = "",
+    /** z. B. "12:34" */
+    val duration: String = "",
+    /** Kanal / Anbieter */
+    val publisher: String = "",
+    /** Datum, z. B. "2026-10-03" */
+    val published: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().put("url", url).put("title", title).put("thumb", thumb)
+        .put("duration", duration).put("publisher", publisher).put("published", published)
+
+    companion object {
+        fun fromJson(o: JSONObject) = WebVideo(
+            o.optString("url"), o.optString("title"), o.optString("thumb"),
+            o.optString("duration"), o.optString("publisher"), o.optString("published"),
+        )
+    }
+}
+
 /** Ein Werkzeug-Aufruf der KI (Websuche, Seite lesen …), als Kärtchen über der Antwort. */
 data class ToolEvent(val name: String, val detail: String, val summary: String, val ok: Boolean = true, val running: Boolean = false) {
     fun toJson(): JSONObject = JSONObject().put("name", name).put("detail", detail).put("summary", summary).put("ok", ok)
@@ -65,6 +88,8 @@ data class ChatMessage(
     val imagePaths: List<String> = emptyList(),
     /** Bilder aus dem Web, die die KI gefunden hat (Galerie über der Antwort) */
     val webImages: List<WebImage> = emptyList(),
+    /** Gefundene Videos (Video-Kärtchen über der Antwort) */
+    val webVideos: List<WebVideo> = emptyList(),
     /** Werkzeuge, die die KI für diese Antwort benutzt hat */
     val toolEvents: List<ToolEvent> = emptyList(),
     /** Angehängte Dokumente (nur bei deinen Nachrichten) */
@@ -97,6 +122,7 @@ data class ChatMessage(
         .put("documents", JSONArray(documents.map { it.toJson() }))
         .put("toolEvents", JSONArray(toolEvents.map { it.toJson() }))
         .put("webImages", JSONArray(webImages.map { it.toJson() }))
+        .put("webVideos", JSONArray(webVideos.map { it.toJson() }))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -112,6 +138,7 @@ data class ChatMessage(
             imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
                 // ältere Chats hatten nur ein Bild
                 ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
+            webVideos = o.optJSONArray("webVideos")?.let { a -> List(a.length()) { WebVideo.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             webImages = o.optJSONArray("webImages")?.let { a -> List(a.length()) { WebImage.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             toolEvents = o.optJSONArray("toolEvents")?.let { a -> List(a.length()) { ToolEvent.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             documents = o.optJSONArray("documents")?.let { a -> List(a.length()) { DocAttachment.fromJson(a.getJSONObject(it)) } }.orEmpty(),
