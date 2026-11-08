@@ -14,6 +14,14 @@
 - [x] Automatischer Chat-Titel (Ollama), sonst erste Wörter
 - [x] Gemma-Modelle aus CharacterFun/Modelle mitbenutzen
 
+## Werkzeuge (Tools) ✅
+- [x] Tool-Schleife für Ollama-Modelle mit „tools“-Fähigkeit
+- [x] uhrzeit, rechnen, web_suche (DuckDuckGo / SearXNG), seite_lesen, bilder_auf_seite, herunterladen (mit Rückfrage)
+- [ ] Memory als Werkzeug (merken / nachschlagen)
+- [ ] ComfyUI-Bild malen als Werkzeug
+- [ ] Timer, Wecker, Kalender
+- [ ] Python auf dem PC ausführen
+
 ## Als Nächstes
 - [x] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
 - [x] Eigene Assistenten / GPTs (Symbol, Anweisung, Temperatur, Lieblingsmodell, Gesprächs-Starter)

@@ -71,6 +71,7 @@ dependencies {
 
     implementation("io.coil-kt:coil-compose:2.7.0")          // Bilder im Chat
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")  // Text aus PDFs lesen
+    implementation("org.jsoup:jsoup:1.17.2")                 // Webseiten lesen (Werkzeuge)
 
     // Gemma 4 auf dem Grafikchip (gleiche Version wie Googles AI Edge Gallery)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")

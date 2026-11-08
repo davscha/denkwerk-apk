@@ -97,6 +97,10 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import de.davscha.denkwerk.data.ChatMessage
 import de.davscha.denkwerk.data.DocAttachment
+import de.davscha.denkwerk.data.ToolEvent
+import de.davscha.denkwerk.engine.Toolbox
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import de.davscha.denkwerk.data.Source
 import de.davscha.denkwerk.engine.Accelerator
 import kotlinx.coroutines.launch
@@ -155,6 +159,23 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 )
             }
+        }
+
+        vm.downloadConfirm?.let { c ->
+            AlertDialog(
+                onDismissRequest = { vm.answerDownload(false) },
+                title = { Text("Dateien speichern?") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Die KI möchte ${c.request.urls.size} Datei(en) nach Denkwerk/Downloads speichern:", fontSize = 14.sp)
+                        c.request.urls.take(10).forEach { u ->
+                            Text("• " + u.substringBefore('?').takeLast(70), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { vm.answerDownload(true) }) { Text("Speichern") } },
+                dismissButton = { TextButton(onClick = { vm.answerDownload(false) }) { Text("Ablehnen") } },
+            )
         }
 
         InputBar(
@@ -261,6 +282,7 @@ private fun StatusLine(s: EngineStatus) {
                 }
             )
             if (s.vision) append(" · Bilder ✓")
+            if (s.tools) append(" · Tools ✓")
         } to Mint
         is EngineStatus.Failed -> "Fehler: ${s.message}" to MaterialTheme.colorScheme.error
     }
@@ -319,7 +341,8 @@ private fun ChoiceItem(vm: AppViewModel, c: ModelChoice, onDismiss: () -> Unit) 
         text = {
             Column {
                 Text(c.title, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
-                if (c.vision == true) Text("versteht Bilder", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val caps = listOfNotNull("versteht Bilder".takeIf { c.vision == true }, "Tools".takeIf { c.tools == true })
+                if (caps.isNotEmpty()) Text(caps.joinToString(" · "), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         trailingIcon = { if (active) Icon(Icons.Default.Check, null, tint = Mint) },
@@ -504,11 +527,34 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
             copied = false
         }
     }
+    val tools = if (streaming) vm.streamingTools else m.toolEvents
     Column(Modifier.fillMaxWidth()) {
+        if (tools.isNotEmpty()) {
+            Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                tools.forEach { t -> ToolCard(t) }
+            }
+        }
         when {
-            streaming && text.isEmpty() -> TypingDots()
+            streaming && text.isEmpty() && tools.none { it.running } -> TypingDots()
+            streaming && text.isEmpty() -> {}
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
             else -> MarkdownText(text)
+        }
+        // Heruntergeladene Bilder
+        if (!streaming && m.imagePaths.isNotEmpty()) {
+            Row(
+                Modifier.padding(top = 8.dp).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                m.imagePaths.forEach { path ->
+                    AsyncImage(
+                        model = File(path),
+                        contentDescription = "Heruntergeladenes Bild",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(if (m.imagePaths.size == 1) 220.dp else 140.dp).clip(RoundedCornerShape(14.dp)),
+                    )
+                }
+            }
         }
         if (!streaming && text.isNotEmpty()) {
             Row(
@@ -552,6 +598,39 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
 private fun SmallAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
         Icon(icon, label, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
+    }
+}
+
+/** Kärtchen für einen Werkzeug-Aufruf, z. B. „🔍 Websuche · „wetter potsdam“ · 6 Treffer“ */
+@Composable
+private fun ToolCard(t: ToolEvent) {
+    val (icon, label) = Toolbox.label(t.name)
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(icon, fontSize = 13.sp)
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        if (t.detail.isNotBlank()) {
+            Text(" · ${t.detail}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp))
+        }
+        Spacer(Modifier.width(6.dp))
+        if (t.running) {
+            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(12.dp), color = Mint)
+        } else {
+            Text(
+                t.summary,
+                fontSize = 12.sp,
+                color = if (t.ok) Mint else MaterialTheme.colorScheme.error,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 220.dp),
+            )
+        }
     }
 }
 

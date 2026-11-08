@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -46,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -86,6 +88,7 @@ fun SettingsScreen(vm: AppViewModel) {
             ) {
                 DeviceModelsSection(vm)
                 OllamaSection(vm)
+                ToolsSection(vm)
                 BehaviourSection(vm)
                 SpeechSection(vm)
                 AboutSection(vm)
@@ -320,6 +323,52 @@ private fun OllamaSection(vm: AppViewModel) {
                 if (active) Icon(Icons.Default.Check, "Aktiv", tint = Mint)
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Werkzeuge
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun ToolsSection(vm: AppViewModel) {
+    var searx by remember { mutableStateOf(vm.settings.searxngUrl) }
+    Section(Icons.Default.Build, "Werkzeuge", "Für Ollama-Modelle mit Tool-Unterstützung (z. B. qwen3, llama3.1)") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Werkzeuge benutzen", fontSize = 14.sp)
+                Text(
+                    "Websuche, Seite lesen, Bilder finden, Herunterladen (mit Rückfrage), Rechner, Uhrzeit",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = vm.toolsEnabledState, onCheckedChange = { vm.setToolsEnabled(it) })
+        }
+        val ready = vm.engineStatus as? EngineStatus.Ready
+        Text(
+            when {
+                ready == null -> "Kein Modell geladen."
+                ready.tools -> "Das aktive Modell kann Werkzeuge benutzen ✓"
+                else -> "Das aktive Modell kann keine Werkzeuge benutzen – in der Modell-Liste steht „Tools“ bei passenden Modellen."
+            },
+            fontSize = 12.sp,
+            color = if (ready?.tools == true) Mint else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = searx,
+            onValueChange = { searx = it; vm.settings.searxngUrl = it.trim() },
+            label = { Text("Eigene SearXNG-Suche (optional)") },
+            placeholder = { Text("http://192.168.178.41:8888") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Leer = DuckDuckGo (ohne PC, blockt aber gelegentlich). SearXNG braucht in der settings.yml das Format „json“.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

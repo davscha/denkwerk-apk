@@ -36,6 +36,16 @@ class Settings(context: Context) {
         get() = prefs.getInt("ollamaContext", 16384)
         set(v) = prefs.edit().putInt("ollamaContext", v).apply()
 
+    /** Werkzeuge (Websuche, Seite lesen, Herunterladen …) bei Ollama-Modellen mit Tool-Unterstützung */
+    var toolsEnabled: Boolean
+        get() = prefs.getBoolean("toolsEnabled", true)
+        set(v) = prefs.edit().putBoolean("toolsEnabled", v).apply()
+
+    /** Eigene SearXNG-Suche, z. B. http://192.168.178.41:8888 – leer = DuckDuckGo */
+    var searxngUrl: String
+        get() = prefs.getString("searxngUrl", "") ?: ""
+        set(v) = prefs.edit().putString("searxngUrl", v).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

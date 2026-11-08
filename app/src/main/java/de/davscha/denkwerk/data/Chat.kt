@@ -15,6 +15,15 @@ data class DocAttachment(val name: String, val textPath: String, val chars: Int)
     }
 }
 
+/** Ein Werkzeug-Aufruf der KI (Websuche, Seite lesen …), als Kärtchen über der Antwort. */
+data class ToolEvent(val name: String, val detail: String, val summary: String, val ok: Boolean = true, val running: Boolean = false) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("detail", detail).put("summary", summary).put("ok", ok)
+
+    companion object {
+        fun fromJson(o: JSONObject) = ToolEvent(o.optString("name"), o.optString("detail"), o.optString("summary"), o.optBoolean("ok", true))
+    }
+}
+
 /** Eine Fassung einer KI-Antwort – bei „Neu erzeugen“ bleiben alle Fassungen erhalten (‹ 1/3 ›). */
 data class Variant(val text: String, val modelLabel: String, val tokensPerSec: Float, val isError: Boolean) {
     fun toJson(): JSONObject = JSONObject()
@@ -34,6 +43,8 @@ data class ChatMessage(
     val text: String,
     /** Angehängte Bilder (absolute Pfade), nur bei deinen Nachrichten */
     val imagePaths: List<String> = emptyList(),
+    /** Werkzeuge, die die KI für diese Antwort benutzt hat */
+    val toolEvents: List<ToolEvent> = emptyList(),
     /** Angehängte Dokumente (nur bei deinen Nachrichten) */
     val documents: List<DocAttachment> = emptyList(),
     /** Welches Modell geantwortet hat, z. B. "Gemma 4 E4B · Gerät" */
@@ -62,6 +73,7 @@ data class ChatMessage(
         .put("text", text)
         .put("imagePaths", JSONArray(imagePaths))
         .put("documents", JSONArray(documents.map { it.toJson() }))
+        .put("toolEvents", JSONArray(toolEvents.map { it.toJson() }))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -77,6 +89,7 @@ data class ChatMessage(
             imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
                 // ältere Chats hatten nur ein Bild
                 ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
+            toolEvents = o.optJSONArray("toolEvents")?.let { a -> List(a.length()) { ToolEvent.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             documents = o.optJSONArray("documents")?.let { a -> List(a.length()) { DocAttachment.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             modelLabel = o.optString("modelLabel"),
             tokensPerSec = o.optDouble("tokensPerSec", 0.0).toFloat(),

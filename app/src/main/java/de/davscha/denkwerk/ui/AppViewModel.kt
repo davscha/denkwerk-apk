@@ -16,6 +16,11 @@ import de.davscha.denkwerk.data.ChatStore
 import de.davscha.denkwerk.data.Preset
 import de.davscha.denkwerk.data.DocAttachment
 import de.davscha.denkwerk.data.SavedPrompt
+import de.davscha.denkwerk.data.ToolEvent
+import de.davscha.denkwerk.engine.DownloadRequest
+import de.davscha.denkwerk.engine.ToolStreamEvent
+import de.davscha.denkwerk.engine.Toolbox
+import kotlinx.coroutines.CompletableDeferred
 import de.davscha.denkwerk.data.Variant
 import de.davscha.denkwerk.data.Settings
 import de.davscha.denkwerk.data.Source
@@ -45,7 +50,7 @@ enum class Screen { Chat, Settings, Presets, Prompts }
 sealed interface EngineStatus {
     data object None : EngineStatus
     data class Loading(val label: String) : EngineStatus
-    data class Ready(val label: String, val accelerator: Accelerator, val vision: Boolean) : EngineStatus
+    data class Ready(val label: String, val accelerator: Accelerator, val vision: Boolean, val tools: Boolean = false) : EngineStatus
     data class Failed(val label: String, val message: String) : EngineStatus
 }
 
@@ -57,7 +62,15 @@ sealed interface DownloadState {
 }
 
 /** Ein Eintrag in der Modell-Auswahl oben im Chat. */
-data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?)
+data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
+
+/** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
+private const val TOOL_HINT =
+    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, seite_lesen, bilder_auf_seite und herunterladen. " +
+        "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
+        "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
+        "herunterladen nur, wenn der Nutzer ausdrücklich Dateien oder Bilder speichern möchte. " +
+        "Nenne bei Informationen aus dem Web die Quelle (Adresse) am Ende. Erfinde keine Adressen."
 
 /** Anweisung für den Assistenten-Entwurf mit KI-Hilfe */
 private const val PRESET_DESIGNER_PROMPT =
@@ -185,12 +198,53 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var ollamaBusy by mutableStateOf(false)
         private set
 
+    // ---------- Werkzeuge ----------
+    /** Werkzeug-Kärtchen der Antwort, die gerade entsteht */
+    var streamingTools by mutableStateOf<List<ToolEvent>>(emptyList())
+        private set
+
+    /** Wartende Rückfrage „Dateien speichern?“ */
+    class DownloadConfirm(val request: DownloadRequest, val answer: CompletableDeferred<Boolean>)
+    var downloadConfirm by mutableStateOf<DownloadConfirm?>(null)
+        private set
+
+    fun answerDownload(ok: Boolean) {
+        downloadConfirm?.answer?.complete(ok)
+        downloadConfirm = null
+    }
+
+    /** true = das aktive Modell darf Werkzeuge benutzen */
+    val toolsActive: Boolean
+        get() = settings.toolsEnabled && (engineStatus as? EngineStatus.Ready)?.tools == true
+
+    /** Für den Schalter in den Einstellungen (State, damit die Oberfläche mitgeht) */
+    var toolsEnabledState by mutableStateOf(true)
+        private set
+
+    fun setToolsEnabled(on: Boolean) {
+        settings.toolsEnabled = on
+        toolsEnabledState = on
+        engineSyncKey = null
+    }
+
+    private val toolbox = Toolbox(
+        downloadDir = { java.io.File(store.dataDir, "Downloads") },
+        searxngUrl = { settings.searxngUrl },
+        pageBudget = { docBudget() },
+        confirmDownload = { req ->
+            val d = CompletableDeferred<Boolean>()
+            withContext(Dispatchers.Main) { downloadConfirm = DownloadConfirm(req, d) }
+            d.await()
+        },
+    )
+
     // ---------- Vorlesen ----------
     var speakingId by mutableStateOf<String?>(null)
         private set
     private val speaker = Speaker(app) { id -> viewModelScope.launch(Dispatchers.Main) { speakingId = id } }
 
     init {
+        toolsEnabledState = settings.toolsEnabled
         refreshStorage()
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
@@ -432,6 +486,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!generating) return
         stopRequested = true
         engine?.stop()
+        answerDownload(false)
         // Falls das Modell nicht reagiert: nach kurzer Zeit hart abbrechen
         val job = generateJob
         viewModelScope.launch {
@@ -449,7 +504,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun syncKey(chatId: String, size: Int): String {
         val (prompt, temp) = promptFor(chats.firstOrNull { it.id == chatId })
-        return "$chatId:$size:$activeLabel:${prompt.hashCode()}:$temp"
+        return "$chatId:$size:$activeLabel:${prompt.hashCode()}:$temp:$toolsActive"
     }
 
     private fun generate(
@@ -460,8 +515,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         previousVariants: List<Variant> = emptyList(),
     ) {
         val eng = engine ?: return
-        val (systemPrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
+        val (basePrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
+        val useTools = toolsActive && eng is OllamaEngine
+        val systemPrompt = if (useTools) basePrompt + "\n\n" + TOOL_HINT else basePrompt
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
+        streamingTools = emptyList()
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
         stopRequested = false
@@ -471,6 +529,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         generateJob = viewModelScope.launch {
             var finalText = ""
+            val toolImages = mutableListOf<String>()
             var loopDetected = false
             var error: String? = null
             var tps = 0f
@@ -486,7 +545,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val start = System.currentTimeMillis()
                 var firstChunkAt = 0L
                 var chunks = 0
-                eng.send(prompt, userMsg.imagePaths).collect { piece ->
+                fun onText(piece: String) {
                     if (chunks == 0) firstChunkAt = System.currentTimeMillis()
                     chunks++
                     streamingText += piece
@@ -497,8 +556,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         eng.stop()
                     }
                 }
+                if (useTools) {
+                    (eng as OllamaEngine).sendWithTools(prompt, userMsg.imagePaths, toolbox.specs()) { name, args ->
+                        toolbox.run(name, args)
+                    }.collect { ev ->
+                        when (ev) {
+                            is ToolStreamEvent.Text -> onText(ev.text)
+                            is ToolStreamEvent.ToolStart -> {
+                                // Text vor dem Werkzeug-Aufruf ist meist nur „Ich schaue mal nach …“ – Absatz dahinter
+                                if (streamingText.isNotBlank() && !streamingText.endsWith("\n\n")) streamingText += "\n\n"
+                                streamingTools = streamingTools + ToolEvent(ev.name, describeArgs(ev.name, ev.args), "läuft …", running = true)
+                            }
+                            is ToolStreamEvent.ToolDone -> {
+                                val i = streamingTools.indexOfLast { it.name == ev.name && it.running }
+                                val doneEv = ToolEvent(ev.name, streamingTools.getOrNull(i)?.detail.orEmpty(), ev.output.summary, ev.output.ok)
+                                streamingTools = if (i >= 0) streamingTools.toMutableList().also { it[i] = doneEv } else streamingTools + doneEv
+                                toolImages += ev.output.images
+                            }
+                        }
+                    }
+                } else {
+                    eng.send(prompt, userMsg.imagePaths).collect { piece -> onText(piece) }
+                }
                 val secs = (System.currentTimeMillis() - (if (firstChunkAt > 0) firstChunkAt else start)) / 1000f
                 tps = if (secs > 0.2f) chunks / secs else 0f
+                if (streamingTools.isNotEmpty()) tps = 0f // Werkzeug-Pausen verfälschen die Geschwindigkeit
                 finalText = streamingText
                 if (!stopRequested) engineSyncKey = syncKey(chatId, history.size + 2)
             } catch (e: CancellationException) {
@@ -514,7 +596,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     finalText.isBlank() && stopRequested -> "_(gestoppt)_"
                     else -> finalText.trim()
                 }
-                var done = reply.copy(text = text, tokensPerSec = tps, isError = error != null && finalText.isBlank())
+                var done = reply.copy(
+                    text = text,
+                    tokensPerSec = tps,
+                    isError = error != null && finalText.isBlank() && streamingTools.isEmpty(),
+                    toolEvents = streamingTools.map { if (it.running) it.copy(running = false, summary = "abgebrochen", ok = false) else it },
+                    imagePaths = toolImages.toList(),
+                )
                 if (previousVariants.isNotEmpty()) {
                     val all = previousVariants + done.asVariant()
                     done = done.copy(variants = all, variantIndex = all.lastIndex)
@@ -524,6 +612,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 streamingId = null
                 streamingText = ""
+                streamingTools = emptyList()
+                answerDownload(false)
                 generating = false
                 generateJob = null
             }
@@ -557,6 +647,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (text.length - start >= 400) return text.substring(0, minOf(text.length, start + period)) + " …"
         }
         return text
+    }
+
+    /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */
+    private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
+        "web_suche" -> args.optString("anfrage")
+        "seite_lesen", "bilder_auf_seite" -> args.optString("url")
+        "rechnen" -> args.optString("ausdruck")
+        "herunterladen" -> args.optJSONArray("urls")?.let { "${it.length()} Datei(en)" } ?: args.optString("url")
+        else -> ""
     }
 
     /** Wie viele Zeichen eines Dokuments mitgeschickt werden (passend zum Kontext des Modells). */
@@ -649,7 +748,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 add(ModelChoice(Source.INTERNAL, it.id, it.title, "Auf dem Gerät", vision = null))
             }
             ollamaModels.forEach {
-                add(ModelChoice(Source.OLLAMA, it.name, it.name, "Ollama · PC", vision = it.vision))
+                add(ModelChoice(Source.OLLAMA, it.name, it.name, "Ollama · PC", vision = it.vision, tools = it.tools))
             }
         }
 
@@ -709,7 +808,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     e to e.load(target)
                 }
                 engine = eng
-                engineStatus = EngineStatus.Ready(label, acc, eng.supportsImages)
+                engineStatus = EngineStatus.Ready(label, acc, eng.supportsImages, (eng as? OllamaEngine)?.supportsTools == true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
