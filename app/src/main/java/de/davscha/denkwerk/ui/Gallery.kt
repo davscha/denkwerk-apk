@@ -58,6 +58,15 @@ import de.davscha.denkwerk.data.WebImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.TravelExplore
+import java.net.URLEncoder
 
 typealias GalleryImage = WebImage
 
@@ -67,6 +76,33 @@ val LocalOpenGallery = staticCompositionLocalOf<(List<GalleryImage>, Int) -> Uni
 /** Was Coil laden soll: Datei auf dem Gerät oder Web-Adresse */
 private fun WebImage.model(thumbnail: Boolean): Any =
     if (local) File(url) else if (thumbnail && thumb.isNotBlank()) thumb else url
+
+/**
+ * Bild an Google Lens geben: Web-Bilder über lens.google.com, eigene Bilder per „Teilen“ an die Google-App
+ * (dort öffnet sich Lens). Ohne Google-App erscheint die normale Teilen-Auswahl.
+ */
+fun openInLens(context: Context, img: GalleryImage) {
+    try {
+        if (!img.local) {
+            val url = "https://lens.google.com/uploadbyurl?url=" + URLEncoder.encode(img.url, "UTF-8")
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(img.url))
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("image/*")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        val google = Intent(send).setPackage("com.google.android.googlequicksearchbox")
+        try {
+            context.startActivity(google)
+        } catch (e: ActivityNotFoundException) {
+            context.startActivity(Intent.createChooser(send, "Bild suchen mit …").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Google Lens konnte nicht geöffnet werden", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
 
 /** Waagerechte Bilderreihe im Chat. Ein Bild groß, mehrere als wischbare Reihe mit Slideshow-Knopf. */
 @Composable
@@ -131,7 +167,10 @@ fun SlideshowDialog(
     startIndex: Int,
     onDismiss: () -> Unit,
     onSave: (GalleryImage) -> Unit,
+    /** Rückwärtssuche in Denkwerk (null = nicht anbieten) */
+    onReverse: ((GalleryImage) -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, (images.size - 1).coerceAtLeast(0))) { images.size }
     var playing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -192,6 +231,23 @@ fun SlideshowDialog(
                                     .background(if (i == pager.currentPage) Mint else Color.White.copy(alpha = 0.4f))
                                     .clickable { scope.launch { pager.animateScrollToPage(i) } },
                             )
+                        }
+                    }
+                }
+                // Bild-Rückwärtssuche: Google Lens (extern) und in Denkwerk (Yandex über die KI)
+                if (current != null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { openInLens(context, current) }) {
+                            Icon(Icons.Default.ImageSearch, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Google Lens", color = Color.White)
+                        }
+                        if (onReverse != null) {
+                            TextButton(onClick = { onReverse(current) }) {
+                                Icon(Icons.Default.TravelExplore, null, tint = Mint, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Herkunft suchen", color = Mint)
+                            }
                         }
                     }
                 }

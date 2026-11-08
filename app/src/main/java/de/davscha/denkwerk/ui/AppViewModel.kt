@@ -67,13 +67,15 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
-    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
+    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "bild_rueckwaertssuche", "anime_bild_quelle", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Für Videos nutze videos_suchen (erscheinen automatisch als Kärtchen); soll ein YouTube-Video zusammengefasst oder " +
+    "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
+        "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
+        "Für Videos nutze videos_suchen (erscheinen automatisch als Kärtchen); soll ein YouTube-Video zusammengefasst oder " +
         "erklärt werden, nutze video_verstehen mit dessen Adresse. " +
         "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, videos_suchen, video_verstehen, seite_lesen, bilder_auf_seite, webseite_durchsuchen, auf_seite_suchen und herunterladen. " +
         "Soll auf einer bestimmten Webseite nach etwas Bestimmtem gesucht werden, nutze zuerst auf_seite_suchen (benutzt das Suchfeld der Seite); " +
@@ -270,7 +272,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         },
         remember = { fact -> withContext(Dispatchers.Main) { if (memoryEnabledState) addMemory(fact) else null } },
         forget = { query -> withContext(Dispatchers.Main) { forgetMemory(query) } },
+        chatImages = { imagesInCurrentChat() },
+        allowedDirs = { listOf(store.dataDir, context.filesDir, context.cacheDir) },
+        sauceNaoKey = { settings.sauceNaoKey },
     )
+
+    /** Alle Bilder im offenen Chat, neueste zuerst: angehängte, heruntergeladene und gefundene */
+    private fun imagesInCurrentChat(): List<String> =
+        currentChat?.messages.orEmpty().asReversed().flatMap { m -> m.imagePaths.reversed() + m.webImages.map { it.url } }
+
+    /** Rückwärtssuche aus der Slideshow starten (braucht ein Modell mit Werkzeugen) */
+    fun reverseSearch(image: de.davscha.denkwerk.data.WebImage) {
+        if (!toolsActive) {
+            toast = "Dafür braucht es ein Ollama-Modell mit Tools – nimm sonst „Google Lens“."
+            return
+        }
+        send("Mach eine Bild-Rückwärtssuche zu diesem Bild: Woher stammt es, wo kommt es noch vor, gibt es eine größere Fassung? Bild: ${image.url}")
+    }
 
     // ---------- Gedächtnis (Memory) ----------
     val memory = mutableStateListOf<MemoryFact>()
@@ -767,6 +785,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche", "videos_suchen" -> args.optString("anfrage")
         "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
+        "bild_rueckwaertssuche", "anime_bild_quelle" -> args.optString("bild").let { b ->
+            when {
+                b.isBlank() -> "letztes Bild im Chat"
+                b.startsWith("http") -> b.removePrefix("https://").removePrefix("http://").substringBefore('/')
+                else -> java.io.File(b).name
+            }
+        }
         "auf_seite_suchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +
             " · „" + args.optString("suche") + "“"
         "webseite_durchsuchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +

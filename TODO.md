@@ -21,6 +21,7 @@
 - [ ] ComfyUI-Bild malen als Werkzeug
 - [ ] Timer, Wecker, Kalender
 - [x] Videosuche mit Kärtchen + YouTube-Videos über Untertitel verstehen
+- [x] Bild-Rückwärtssuche: Google Lens, Yandex-Werkzeug, SauceNAO (optional)
 - [ ] Python auf dem PC ausführen
 
 ## Als Nächstes

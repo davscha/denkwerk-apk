@@ -56,6 +56,11 @@ class Settings(context: Context) {
         get() = prefs.getInt("safeSearch", 0)
         set(v) = prefs.edit().putInt("safeSearch", v.coerceIn(0, 2)).apply()
 
+    /** Kostenloser Schlüssel von saucenao.com (Anime/Illustrationen-Quellensuche), leer = aus */
+    var sauceNaoKey: String
+        get() = prefs.getString("sauceNaoKey", "") ?: ""
+        set(v) = prefs.edit().putString("sauceNaoKey", v.trim()).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

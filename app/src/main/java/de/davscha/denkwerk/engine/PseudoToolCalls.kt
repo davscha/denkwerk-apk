@@ -28,6 +28,8 @@ object PseudoToolCalls {
         "auf_seite_suchen" to "url",
         "videos_suchen" to "anfrage",
         "video_verstehen" to "url",
+        "bild_rueckwaertssuche" to "bild",
+        "anime_bild_quelle" to "bild",
         "rechnen" to "ausdruck",
         "merken" to "fakt",
         "vergessen" to "fakt",

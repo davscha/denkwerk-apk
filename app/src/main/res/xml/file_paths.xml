@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dateien, die Denkwerk an andere Apps weitergeben darf (z. B. Bild an Google Lens) -->
+<paths>
+    <external-path name="extern" path="." />
+    <files-path name="intern" path="." />
+    <cache-path name="cache" path="." />
+</paths>

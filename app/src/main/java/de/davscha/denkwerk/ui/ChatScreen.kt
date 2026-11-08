@@ -124,7 +124,13 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
     // Slideshow für alle Bilder im Chat
     var gallery by remember { mutableStateOf<Pair<List<GalleryImage>, Int>?>(null) }
     gallery?.let { (imgs, start) ->
-        SlideshowDialog(imgs, start, onDismiss = { gallery = null }, onSave = { vm.saveWebImage(it.url) })
+        SlideshowDialog(
+            imgs,
+            start,
+            onDismiss = { gallery = null },
+            onSave = { vm.saveWebImage(it.url) },
+            onReverse = { img -> gallery = null; vm.reverseSearch(img) },
+        )
     }
 
     CompositionLocalProvider(LocalOpenGallery provides { imgs, i -> gallery = imgs to i }) {

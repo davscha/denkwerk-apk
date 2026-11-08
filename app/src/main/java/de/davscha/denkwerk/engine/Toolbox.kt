@@ -37,6 +37,12 @@ class Toolbox(
     private val remember: suspend (String) -> String? = { null },
     /** Gedächtnis: passende Fakten löschen, gibt die Anzahl zurück */
     private val forget: suspend (String) -> Int = { 0 },
+    /** Bilder im aktuellen Chat (neueste zuerst) – für die Rückwärtssuche ohne Angabe */
+    private val chatImages: () -> List<String> = { emptyList() },
+    /** Ordner, aus denen Bilder gelesen werden dürfen */
+    private val allowedDirs: () -> List<File> = { emptyList() },
+    /** SauceNAO-Schlüssel, leer = Werkzeug nicht anbieten */
+    private val sauceNaoKey: () -> String = { "" },
 ) {
 
     /** Die Werkzeugliste im Format, das Ollama erwartet. */
@@ -80,6 +86,25 @@ class Toolbox(
                 required = listOf("anfrage"),
             )
         )
+        put(
+            spec(
+                "bild_rueckwaertssuche",
+                "Bild-Rückwärtssuche (wie Google Lens): findet heraus, woher ein Bild stammt, auf welchen Seiten es vorkommt, " +
+                    "größere Fassungen und ähnliche Bilder. Ohne Angabe wird das zuletzt im Chat gezeigte oder angehängte Bild benutzt. " +
+                    "Ähnliche Bilder erscheinen automatisch als Galerie.",
+                props("bild" to "Optional: Web-Adresse des Bildes oder der im Chat genannte Dateipfad; leer = letztes Bild im Chat"),
+            )
+        )
+        if (sauceNaoKey().isNotBlank()) {
+            put(
+                spec(
+                    "anime_bild_quelle",
+                    "Findet die Quelle von Anime-/Manga-Bildern und Illustrationen (Künstler, Pixiv, Danbooru, Werk, Figuren) über SauceNAO. " +
+                        "Ohne Angabe wird das zuletzt im Chat gezeigte oder angehängte Bild benutzt.",
+                    props("bild" to "Optional: Web-Adresse oder Dateipfad; leer = letztes Bild im Chat"),
+                )
+            )
+        }
         put(
             spec(
                 "videos_suchen",
@@ -182,6 +207,8 @@ class Toolbox(
             args.optBoolean("neueste", false) || args.optString("neueste") == "true",
         )
         "video_verstehen" -> videoTranscript(args.optString("url"))
+        "bild_rueckwaertssuche" -> reverseSearch(args.optString("bild"))
+        "anime_bild_quelle" -> sauceNao(args.optString("bild"))
         "auf_seite_suchen" -> siteSearch(
             args.optString("url"),
             args.optString("suche"),
@@ -560,6 +587,61 @@ class Toolbox(
     private fun canonical(u: String): String =
         u.lowercase().replace("://www.", "://").substringBefore("?utm_").trimEnd('/')
 
+    // ---------- Bild-Rückwärtssuche ----------
+
+    /** Welches Bild gesucht wird: Web-Adresse, erlaubter Dateipfad oder das letzte Bild im Chat */
+    private fun resolveImage(arg: String): String {
+        val a = arg.trim()
+        if (a.startsWith("http")) return a
+        if (a.isNotEmpty()) {
+            val f = File(a).canonicalFile
+            val ok = f.exists() && allowedDirs().any { d -> f.path.startsWith(d.canonicalFile.path) }
+            if (ok) return f.path
+        }
+        return chatImages().firstOrNull() ?: throw IOException("Kein Bild gefunden – bitte ein Bild anhängen oder eine Bild-Adresse nennen")
+    }
+
+    private fun reverseSearch(arg: String): ToolOutput {
+        val image = resolveImage(arg)
+        val r = ReverseImageSearch.yandex(image)
+        if (r.sites.isEmpty() && r.similar.isEmpty()) {
+            return ToolOutput("Die Rückwärtssuche hat nichts gefunden (Ergebnisseite: ${r.resultPage}).", "nichts gefunden", ok = false)
+        }
+        // Galerie: zuerst die gefundenen Original-Bilder der Seiten, dann ähnliche
+        val gallery = (r.sites.filter { it.imageUrl.startsWith("http") }.map { s ->
+            de.davscha.denkwerk.data.WebImage(s.imageUrl, title = "${s.title} (${s.domain}${if (s.size.isNotBlank()) ", ${s.size}" else ""})", source = s.url)
+        } + r.similar).distinctBy { it.url }.take(24)
+        val forModel = buildString {
+            append("Ergebnis der Bild-Rückwärtssuche (Yandex):\n")
+            if (r.sites.isNotEmpty()) {
+                append("\nSeiten, auf denen das Bild vorkommt (${r.sites.size}):\n")
+                r.sites.take(15).forEachIndexed { i, s ->
+                    append("${i + 1}. ${s.title} – ${s.domain}${if (s.size.isNotBlank()) " – ${s.size} px" else ""} – ${s.url}\n")
+                }
+            } else append("\nKeine Seiten mit genau diesem Bild gefunden.\n")
+            append("\n${r.similar.size} ähnliche Bilder gefunden. Die Bilder werden dem Nutzer bereits als Galerie angezeigt – nicht als Links auflisten.\n")
+            append("Nenne die wahrscheinlichste Quelle (frühester/offiziellster Fundort) und was das Bild zeigt.")
+        }
+        return ToolOutput(forModel, "${r.sites.size} Seiten · ${r.similar.size} ähnliche", webImages = gallery)
+    }
+
+    private fun sauceNao(arg: String): ToolOutput {
+        val key = sauceNaoKey()
+        if (key.isBlank()) return ToolOutput("Kein SauceNAO-Schlüssel eingetragen.", "kein Schlüssel", ok = false)
+        val hits = ReverseImageSearch.sauceNao(resolveImage(arg), key).filter { it.similarity >= 50 }
+        if (hits.isEmpty()) return ToolOutput("SauceNAO hat keine sicheren Treffer (Ähnlichkeit unter 50 %).", "keine Treffer")
+        val forModel = "SauceNAO-Treffer:\n" + hits.take(6).mapIndexed { i, h ->
+            "${i + 1}. ${"%.0f".format(h.similarity)} % – ${h.title.ifBlank { "ohne Titel" }}" +
+                (if (h.creator.isNotBlank()) " – Künstler: ${h.creator}" else "") +
+                " – ${h.index}" + (if (h.extra.isNotBlank()) " – ${h.extra}" else "") +
+                (if (h.urls.isNotEmpty()) "\n   " + h.urls.take(3).joinToString(" ") else "")
+        }.joinToString("\n")
+        val gallery = hits.filter { it.thumb.startsWith("http") }.take(8).map {
+            de.davscha.denkwerk.data.WebImage(it.thumb, title = "${"%.0f".format(it.similarity)} % · ${it.title}", source = it.urls.firstOrNull().orEmpty())
+        }
+        return ToolOutput(forModel, "${hits.size} Treffer · beste ${"%.0f".format(hits.first().similarity)} %", webImages = gallery)
+    }
+
     // ---------- Videosuche ----------
 
     private fun searchVideos(query: String, count: Int, duration: String, newest: Boolean): ToolOutput {
@@ -931,6 +1013,8 @@ class Toolbox(
             "auf_seite_suchen" -> "🔎" to "Seitensuche"
             "videos_suchen" -> "🎬" to "Videosuche"
             "video_verstehen" -> "📺" to "Video angeschaut"
+            "bild_rueckwaertssuche" -> "🔁" to "Rückwärtssuche"
+            "anime_bild_quelle" -> "🎨" to "SauceNAO"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"
             "vergessen" -> "🧹" to "Vergessen"

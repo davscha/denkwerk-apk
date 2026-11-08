@@ -460,6 +460,20 @@ private fun ToolsSection(vm: AppViewModel) {
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        var sauce by remember { mutableStateOf(vm.settings.sauceNaoKey) }
+        OutlinedTextField(
+            value = sauce,
+            onValueChange = { sauce = it; vm.settings.sauceNaoKey = it },
+            label = { Text("SauceNAO-Schlüssel (optional)") },
+            placeholder = { Text("für Anime-/Zeichnungs-Quellen") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Kostenlos auf saucenao.com → Account → api – damit findet Denkwerk Künstler, Pixiv- und Danbooru-Einträge zu Illustrationen.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
