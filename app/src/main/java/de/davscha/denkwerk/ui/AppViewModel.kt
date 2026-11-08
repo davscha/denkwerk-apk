@@ -93,6 +93,8 @@ private const val TOOL_HINT =
         "Ist ein Werkzeug fehlgeschlagen, behaupte nie, es habe etwas ergeben. " +
         "Nenne Namen von Personen auf Fotos nur, wenn sie aus Quellen hervorgehen (Bildunterschrift, Artikel, Fundstelle der Rückwärtssuche) – " +
         "rate sie nicht allein aus dem Gesicht; sag sonst, dass du die Person nicht sicher bestimmen kannst. " +
+        "Nenne Details wie Torschützen, Minuten, Aufstellungen, Trainer, Zahlen oder Zitate NUR, wenn sie wörtlich in den Ergebnissen stehen – " +
+        "fehlen sie, schreib z. B. „Die Torschützen stehen nicht in den gelesenen Quellen“. " +
         "Erfinde keine Namen, Zitate, Zahlen oder Zusammenhänge; steht etwas nicht in den Quellen, sag das offen. " +
         "Bei politischen oder umstrittenen Themen bleib sachlich und neutral: gib wieder, was berichtet wird und von wem, " +
         "übernimm keine Wertungen ungeprüft (auch nicht die des Nutzers) und nenne verschiedene Sichtweisen, wenn die Quellen sie hergeben. " +
@@ -715,6 +717,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         generateJob = viewModelScope.launch {
             var finalText = ""
             val toolImages = mutableListOf<String>()
+            val toolTexts = StringBuilder() // alles, was die Werkzeuge gelesen haben – für die Faktenprüfung
             var loopDetected = false
             var error: String? = null
             var tps = 0f
@@ -743,9 +746,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     if (res != null && res.ok) {
                         streamingSources = streamingSources + res.sources
+                        toolTexts.append(res.forModel).append('\n')
                         val budget = if (eng is OllamaEngine) (settings.ollamaContext * 2).coerceAtLeast(6000) else 3500
-                        prompt = "Aktuelle Websuche zu meiner Frage (stütze dich darauf, nenne Belege mit [Nummer], " +
-                            "und sag ehrlich, wenn die Ergebnisse die Frage nicht beantworten):\n\n" +
+                        prompt = "Aktuelle Websuche zu meiner Frage (stütze dich NUR darauf, nenne Belege mit [Nummer]; " +
+                            "nenne keine Details wie Namen, Torschützen, Minuten oder Zahlen, die nicht in diesen Ergebnissen stehen, " +
+                            "und sag ehrlich, wenn die Ergebnisse die Frage nicht oder nur teilweise beantworten):\n\n" +
                             res.forModel.take(budget) + "\n\n---\nMeine Frage: " + prompt
                     }
                 }
@@ -786,6 +791,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 streamingWebImages = streamingWebImages + ev.output.webImages
                                 streamingWebVideos = streamingWebVideos + ev.output.webVideos
                                 streamingSources = streamingSources + ev.output.sources
+                                if (ev.output.ok) toolTexts.append(ev.output.forModel).append('\n')
                             }
                         }
                     }
@@ -823,6 +829,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     webImages = streamingWebImages.distinctBy { it.url },
                     webVideos = streamingWebVideos.distinctBy { it.url },
                     sources = streamingSources.distinctBy { it.url },
+                    // Faktenprüfung: Namen und Zahlen, die in keiner gelesenen Quelle stehen
+                    unverified = if (error == null && toolTexts.isNotEmpty())
+                        runCatching { de.davscha.denkwerk.engine.FactCheck.unverified(text, toolTexts.toString(), userMsg.text) }.getOrDefault(emptyList())
+                    else emptyList(),
                 )
                 if (previousVariants.isNotEmpty()) {
                     val all = previousVariants + done.asVariant()

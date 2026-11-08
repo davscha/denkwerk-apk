@@ -311,8 +311,10 @@ class Toolbox(
         val each = if (readTop > 0) (budget / readTop).coerceIn(800, 6000) else 0
         val read = mutableListOf<de.davscha.denkwerk.data.SourceLink>()
         val articles = StringBuilder()
+        var tried = 0
         for (r in results) {
-            if (read.size >= readTop) break
+            if (read.size >= readTop || tried >= readTop + 4) break
+            tried++
             if (Regex("\\.(pdf|zip|mp4|jpg|png)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(r.url)) continue
             val doc = runCatching { fetch(r.url) }.getOrNull() ?: continue
             val title = doc.title().ifBlank { r.title }
@@ -320,7 +322,8 @@ class Toolbox(
             // Passende Absätze bevorzugen, sonst den Anfang des Artikels
             val hits = lines.filter { l -> terms.any { l.lowercase().contains(it) } }
             val body = (if (hits.size >= 3) hits else lines).joinToString("\n").take(each)
-            if (body.length < 200) continue
+            // Seiten mit kaum Text (reine Spielpläne, Startseiten, JavaScript-Seiten) überspringen – lieber den nächsten Treffer
+            if (body.length < 500) continue
             read += de.davscha.denkwerk.data.SourceLink(title, doc.location())
             articles.append("### [${read.size}] ").append(title).append('\n').append(doc.location()).append('\n').append(body).append("\n\n")
         }

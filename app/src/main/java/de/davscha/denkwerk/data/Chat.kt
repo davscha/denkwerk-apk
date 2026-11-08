@@ -103,6 +103,8 @@ data class ChatMessage(
     val imagePaths: List<String> = emptyList(),
     /** Bilder aus dem Web, die die KI gefunden hat (Galerie über der Antwort) */
     val webImages: List<WebImage> = emptyList(),
+    /** Namen/Zahlen aus der Antwort, die in den gelesenen Quellen nicht vorkamen (Faktenprüfung) */
+    val unverified: List<String> = emptyList(),
     /** Gelesene Webseiten, auf die sich die Antwort stützt */
     val sources: List<SourceLink> = emptyList(),
     /** Gefundene Videos (Video-Kärtchen über der Antwort) */
@@ -141,6 +143,7 @@ data class ChatMessage(
         .put("webImages", JSONArray(webImages.map { it.toJson() }))
         .put("webVideos", JSONArray(webVideos.map { it.toJson() }))
         .put("sources", JSONArray(sources.map { it.toJson() }))
+        .put("unverified", JSONArray(unverified))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -156,6 +159,7 @@ data class ChatMessage(
             imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
                 // ältere Chats hatten nur ein Bild
                 ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
+            unverified = o.optJSONArray("unverified")?.let { a -> List(a.length()) { a.optString(it) } }.orEmpty(),
             sources = o.optJSONArray("sources")?.let { a -> List(a.length()) { SourceLink.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             webVideos = o.optJSONArray("webVideos")?.let { a -> List(a.length()) { WebVideo.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             webImages = o.optJSONArray("webImages")?.let { a -> List(a.length()) { WebImage.fromJson(a.getJSONObject(it)) } }.orEmpty(),

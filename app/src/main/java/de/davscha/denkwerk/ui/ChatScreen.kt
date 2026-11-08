@@ -578,6 +578,24 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
         }
         // Quellen, auf die sich die Antwort stützt – antippen öffnet die Seite
         if (sources.isNotEmpty()) SourcesRow(sources)
+        // Faktenprüfung: was in keiner gelesenen Quelle steht
+        if (!streaming && m.unverified.isNotEmpty()) {
+            Column(
+                Modifier
+                    .padding(top = 8.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.10f))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                Text("⚠️ Nicht in den gelesenen Quellen gefunden", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                Text(m.unverified.joinToString(" · "), fontSize = 12.sp)
+                Text(
+                    "Das kann richtig sein, ist aber nicht belegt – vielleicht vom Modell ergänzt. Bitte selbst prüfen.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         // Heruntergeladene Bilder (auf dem Gerät)
         if (!streaming && m.imagePaths.isNotEmpty()) {
             val local = m.imagePaths.map { GalleryImage(url = it, title = File(it).name, local = true) }
