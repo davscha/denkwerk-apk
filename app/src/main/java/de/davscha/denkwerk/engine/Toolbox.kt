@@ -80,6 +80,20 @@ class Toolbox(
         )
         put(
             spec(
+                "webseite_durchsuchen",
+                "Durchsucht eine GANZE Webseite: folgt den Links zu Unterseiten derselben Seite (bis zu max_seiten) und sammelt " +
+                    "Text-Ausschnitte zu einem Suchbegriff und auf Wunsch alle Bilder. Benutzen, wenn der Nutzer eine Adresse nennt und " +
+                    "Infos oder Bilder von der ganzen Seite möchte, nicht nur von der Startseite. Bilder erscheinen automatisch als Galerie.",
+                JSONObject()
+                    .put("url", JSONObject().put("type", "string").put("description", "Startadresse mit https://"))
+                    .put("suche", JSONObject().put("type", "string").put("description", "Wonach gesucht wird (leer = alles zusammenfassen)"))
+                    .put("bilder", JSONObject().put("type", "boolean").put("description", "true = auch Bilder sammeln"))
+                    .put("max_seiten", JSONObject().put("type", "integer").put("description", "Wie viele Unterseiten höchstens (Standard 15, max. 40)")),
+                required = listOf("url"),
+            )
+        )
+        put(
+            spec(
                 "bilder_auf_seite",
                 "Listet die Bilder einer Webseite mit Adresse und Beschreibung auf (ohne kleine Symbole und Logos).",
                 props("url" to "Vollständige Adresse mit https://"),
@@ -125,6 +139,12 @@ class Toolbox(
         "web_suche" -> search(args.optString("anfrage"))
         "seite_lesen" -> readPage(args.optString("url"))
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
+        "webseite_durchsuchen" -> crawlSite(
+            args.optString("url"),
+            args.optString("suche"),
+            args.optBoolean("bilder", false) || args.optString("bilder") == "true",
+            args.optInt("max_seiten", 15).coerceIn(2, 40),
+        )
         "bilder_suchen" -> searchImages(args.optString("anfrage"), args.optInt("anzahl", 6).coerceIn(1, 12))
         "herunterladen" -> download(args)
         "merken" -> {
@@ -214,8 +234,17 @@ class Toolbox(
     private fun readPage(url: String): ToolOutput {
         val doc = fetch(url)
         val title = doc.title().ifBlank { url }
+        var text = pageLines(doc).joinToString("\n")
+        val budget = pageBudget()
+        val cut = text.length > budget
+        if (cut) text = text.take(budget) + "\n[… gekürzt, ${text.length} Zeichen insgesamt]"
+        return ToolOutput("Titel: $title\nAdresse: ${doc.location()}\n\n$text", title + (if (cut) " · gekürzt" else ""))
+    }
+
+    /** Lesbarer Text einer Seite als Zeilen (Achtung: entfernt Menüs usw. aus [doc]). */
+    private fun pageLines(doc: Document): List<String> {
         doc.select("script, style, noscript, iframe, svg, nav, footer, header, aside, form, button, [role=navigation], .cookie, .ads, .advert").remove()
-        val root = doc.selectFirst("article") ?: doc.selectFirst("main") ?: doc.body()
+        val root = doc.selectFirst("article") ?: doc.selectFirst("main") ?: doc.body() ?: return emptyList()
         // Absätze, Überschriften, Listen und Code als Zeilen
         val lines = root.select("h1, h2, h3, h4, p, li, pre, blockquote, td").mapNotNull { e ->
             val t = e.text().trim()
@@ -226,29 +255,31 @@ class Toolbox(
                 else -> t
             }
         }.distinct()
-        var text = lines.joinToString("\n").ifBlank { root.text() }
-        val budget = pageBudget()
-        val cut = text.length > budget
-        if (cut) text = text.take(budget) + "\n[… gekürzt, ${text.length} Zeichen insgesamt]"
-        return ToolOutput("Titel: $title\nAdresse: ${doc.location()}\n\n$text", title + (if (cut) " · gekürzt" else ""))
+        return lines.ifEmpty { listOf(root.text()) }
     }
 
-    private fun imagesOnPage(url: String): ToolOutput {
-        val doc = fetch(url)
+    /** Bilder einer Seite: Adresse → Beschreibung (ohne Symbole, Logos, Mini-Bilder). */
+    private fun pageImages(doc: Document): LinkedHashMap<String, String> {
         val found = linkedMapOf<String, String>()
         // Vorschaubild der Seite zuerst
-        doc.selectFirst("meta[property=og:image]")?.attr("abs:content")?.takeIf { it.isNotBlank() }?.let { found[it] = "Vorschaubild der Seite" }
+        doc.selectFirst("meta[property=og:image]")?.attr("abs:content")?.takeIf { it.isNotBlank() }?.let { found[it] = "Vorschaubild: ${doc.title()}".take(120) }
         for (img in doc.select("img")) {
-            val src = listOf("abs:src", "abs:data-src", "abs:data-original").map { img.attr(it) }.firstOrNull { it.startsWith("http") }
+            val src = listOf("abs:src", "abs:data-src", "abs:data-original", "abs:data-lazy-src").map { img.attr(it) }.firstOrNull { it.startsWith("http") }
                 ?: img.attr("abs:srcset").split(",").lastOrNull()?.trim()?.substringBefore(" ")?.takeIf { it.startsWith("http") }
                 ?: continue
             val lower = src.lowercase()
-            if (lower.endsWith(".svg") || lower.contains("logo") || lower.contains("icon") || lower.contains("sprite") || lower.contains("pixel")) continue
+            if (lower.endsWith(".svg") || lower.contains("logo") || lower.contains("icon") || lower.contains("sprite") || lower.contains("pixel") || lower.contains("avatar")) continue
             val w = img.attr("width").toIntOrNull()
             val h = img.attr("height").toIntOrNull()
             if ((w != null && w < 120) || (h != null && h < 120)) continue
             found.putIfAbsent(src, img.attr("alt").ifBlank { img.attr("title") }.take(120))
         }
+        return found
+    }
+
+    private fun imagesOnPage(url: String): ToolOutput {
+        val doc = fetch(url)
+        val found = pageImages(doc)
         if (found.isEmpty()) return ToolOutput("Keine passenden Bilder auf ${doc.location()} gefunden.", "keine Bilder gefunden")
         val list = found.entries.take(25).mapIndexed { i, (src, alt) -> "${i + 1}. $src" + (if (alt.isNotBlank()) " – $alt" else "") }
         val gallery = found.entries.take(12).map { (src, alt) -> de.davscha.denkwerk.data.WebImage(src, title = alt, source = doc.location()) }
@@ -258,6 +289,97 @@ class Toolbox(
             webImages = gallery,
         )
     }
+
+    // ---------- Ganze Webseite durchsuchen ----------
+
+    private class CrawledPage(val title: String, val url: String, val lines: List<String>, val score: Int)
+
+    /**
+     * Folgt den Links innerhalb derselben Webseite (Breitensuche, höchstens [maxPages] Seiten)
+     * und sammelt Text-Ausschnitte und Bilder, die zum Suchbegriff passen.
+     */
+    private fun crawlSite(url: String, query: String, wantImages: Boolean, maxPages: Int): ToolOutput {
+        val startUrl = normalizeUrl(url)
+        val host = URL(startUrl).host.removePrefix("www.")
+        val terms = query.lowercase().split(Regex("[^a-zäöüß0-9]+")).filter { it.length >= 3 }
+        fun relevance(t: String): Int { val l = t.lowercase(); return terms.sumOf { term -> l.windowed(term.length).count { it == term } } }
+
+        val queue = ArrayDeque<String>().apply { add(startUrl) }
+        val seen = mutableSetOf(canonical(startUrl))
+        val pages = mutableListOf<CrawledPage>()
+        val images = linkedMapOf<String, Pair<String, String>>() // Bild → (Beschreibung, Seite)
+        val deadline = System.currentTimeMillis() + 75_000
+        var errors = 0
+
+        while (queue.isNotEmpty() && pages.size < maxPages && System.currentTimeMillis() < deadline) {
+            val u = queue.removeFirst()
+            val doc = runCatching { fetch(u) }.getOrNull()
+            if (doc == null) { errors++; continue }
+            // 1. Links derselben Webseite einsammeln – passende (Text/Adresse mit Suchbegriff) nach vorn
+            for (a in doc.select("a[href]")) {
+                val link = a.attr("abs:href").substringBefore('#').trim()
+                if (!link.startsWith("http")) continue
+                val linkHost = runCatching { URL(link).host.removePrefix("www.") }.getOrNull() ?: continue
+                if (linkHost != host) continue
+                val lower = link.lowercase()
+                if (Regex("\\.(pdf|jpe?g|png|gif|webp|svg|zip|rar|mp[34]|exe|apk|docx?|xlsx?)(\\?|$)").containsMatchIn(lower)) continue
+                if (Regex("login|logout|anmelden|warenkorb|cart|checkout|account|wp-admin|javascript:|mailto:|/feed|/tag/|/print").containsMatchIn(lower)) continue
+                if (!seen.add(canonical(link)) || seen.size > 600) continue
+                if (terms.isNotEmpty() && relevance(a.text() + " " + link) > 0) queue.addFirst(link) else queue.addLast(link)
+            }
+            // 2. Bilder
+            if (wantImages) {
+                pageImages(doc).forEach { (src, alt) -> images.putIfAbsent(src, alt to doc.location()) }
+            }
+            // 3. Text (verändert doc – deshalb zuletzt)
+            val title = doc.title().ifBlank { u }
+            val lines = pageLines(doc)
+            pages += CrawledPage(title, doc.location(), lines, relevance(title) * 3 + lines.sumOf { relevance(it) })
+            Thread.sleep(150) // die Webseite nicht überrennen
+        }
+        if (pages.isEmpty()) throw IOException("Die Webseite konnte nicht geladen werden")
+
+        // Textauszüge: passende Zeilen je Seite, die relevantesten Seiten zuerst
+        val budget = pageBudget()
+        val ordered = if (terms.isEmpty()) pages else pages.sortedByDescending { it.score }
+        val perPage = (budget / ordered.size.coerceAtLeast(1)).coerceIn(300, 2500)
+        val text = buildString {
+            for (p in ordered) {
+                if (length > budget) break
+                val excerpt = if (terms.isEmpty()) p.lines.joinToString("\n") else {
+                    val hits = p.lines.filter { relevance(it) > 0 }
+                    if (hits.isEmpty()) continue
+                    hits.joinToString("\n")
+                }
+                append("### ${p.title}\n${p.url}\n")
+                append(excerpt.take(perPage))
+                append("\n\n")
+            }
+        }.ifBlank { "Auf ${pages.size} Seiten nichts zu „$query“ gefunden. Seiten: " + pages.joinToString { it.url } }
+
+        // Bilder: passende Beschreibung/Adresse zuerst
+        val imgList = images.entries.sortedByDescending { (src, v) -> relevance(v.first + " " + src) }
+        val gallery = if (wantImages) imgList.take(24).map { (src, v) ->
+            de.davscha.denkwerk.data.WebImage(src, title = v.first, source = v.second)
+        } else emptyList()
+
+        val forModel = buildString {
+            append("Durchsucht: ${pages.size} Seiten von $host")
+            if (errors > 0) append(" ($errors nicht ladbar)")
+            append(".\n\n")
+            append(text.take(budget))
+            if (gallery.isNotEmpty()) {
+                append("\n\nGefundene Bilder (${images.size} insgesamt, die ${gallery.size} passendsten werden dem Nutzer bereits als Galerie angezeigt – nicht als Links auflisten):\n")
+                gallery.take(12).forEach { append("- ${it.title.ifBlank { "Bild" }} (${it.source})\n") }
+            }
+        }
+        val summary = "${pages.size} Seiten" + (if (wantImages) " · ${images.size} Bilder" else "")
+        return ToolOutput(forModel, summary, webImages = gallery)
+    }
+
+    /** Gleiche Seite = gleiche Adresse ohne www, Schrägstrich am Ende und Tracking-Parameter */
+    private fun canonical(u: String): String =
+        u.lowercase().replace("://www.", "://").substringBefore("?utm_").trimEnd('/')
 
     // ---------- Bildersuche ----------
 
@@ -440,6 +562,7 @@ class Toolbox(
             "seite_lesen" -> "📄" to "Seite gelesen"
             "bilder_auf_seite" -> "🖼️" to "Bilder auf Seite"
             "bilder_suchen" -> "🖼️" to "Bildersuche"
+            "webseite_durchsuchen" -> "🕸️" to "Webseite durchsucht"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"
             "vergessen" -> "🧹" to "Vergessen"

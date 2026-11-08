@@ -66,11 +66,16 @@ sealed interface DownloadState {
 /** Ein Eintrag in der Modell-Auswahl oben im Chat. */
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
-private val KNOWN_TOOLS = setOf("uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "herunterladen", "merken", "vergessen")
+private val KNOWN_TOOLS = setOf(
+    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen",
+    "herunterladen", "merken", "vergessen",
+)
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite und herunterladen. " +
+    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite, webseite_durchsuchen und herunterladen. " +
+        "Nennt der Nutzer eine Webseite und sucht Infos oder Bilder darauf, nutze webseite_durchsuchen – es durchsucht auch die Unterseiten, " +
+        "nicht nur die Startseite (bei Bildern bilder=true setzen). seite_lesen nur für genau eine einzelne Seite. " +
         "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
         "also keine Linkliste dazu schreiben. " +
         "Mit merken speicherst du dauerhafte Fakten über den Nutzer (wenn er \"merk dir\" sagt oder Wichtiges über sich erzählt), mit vergessen löschst du sie. " +
@@ -750,6 +755,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche" -> args.optString("anfrage")
+        "webseite_durchsuchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +
+            args.optString("suche").takeIf { it.isNotBlank() }?.let { " · „$it“" }.orEmpty()
         "seite_lesen", "bilder_auf_seite" -> args.optString("url")
         "rechnen" -> args.optString("ausdruck")
         "herunterladen" -> args.optJSONArray("urls")?.let { "${it.length()} Datei(en)" } ?: args.optString("url")

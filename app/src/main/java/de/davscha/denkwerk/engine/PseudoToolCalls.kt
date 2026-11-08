@@ -24,6 +24,7 @@ object PseudoToolCalls {
         "bilder_suchen" to "anfrage",
         "seite_lesen" to "url",
         "bilder_auf_seite" to "url",
+        "webseite_durchsuchen" to "url",
         "rechnen" to "ausdruck",
         "merken" to "fakt",
         "vergessen" to "fakt",
