@@ -17,7 +17,8 @@
 ## Als Nächstes
 - [x] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
 - [x] Eigene Assistenten / GPTs (Symbol, Anweisung, Temperatur, Lieblingsmodell, Gesprächs-Starter)
-- [ ] Assistenten mit KI-Hilfe erstellen (Stichpunkte → fertige Anweisung)
+- [x] Assistenten mit KI-Hilfe erstellen (Stichpunkte → fertige Anweisung)
+- [x] Schleifen-Schutz: Wiederholungen erkennen und stoppen, Ollama-Kontext wählbar (4k–32k)
 - [ ] Assistenten teilen (Export/Import als Datei)
 - [ ] Prompt-Bibliothek mit `/`-Befehl
 - [x] Mehrere Bilder pro Nachricht (Ollama bis 8, Gerät 1)

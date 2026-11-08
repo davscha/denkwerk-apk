@@ -57,6 +57,18 @@ sealed interface DownloadState {
 /** Ein Eintrag in der Modell-Auswahl oben im Chat. */
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?)
 
+/** Anweisung für den Assistenten-Entwurf mit KI-Hilfe */
+private const val PRESET_DESIGNER_PROMPT =
+    "Du entwirfst KI-Assistenten für eine Chat-App. Der Nutzer gibt Stichpunkte. " +
+        "Antworte AUSSCHLIESSLICH mit einem JSON-Objekt, ohne Erklärung, mit diesen Feldern: " +
+        "\"name\" (kurzer deutscher Name, höchstens 3 Wörter), " +
+        "\"emoji\" (genau ein passendes Emoji), " +
+        "\"description\" (ein kurzer Satz, höchstens 60 Zeichen), " +
+        "\"systemPrompt\" (ausführliche Anweisung an die KI auf Deutsch, 4 bis 8 Sätze, beginnt mit \"Du bist\", " +
+        "beschreibt Rolle, Tonfall, Antwortformat und was zu vermeiden ist), " +
+        "\"temperature\" (Zahl zwischen 0.1 und 1.2: sachlich niedrig, kreativ hoch), " +
+        "\"starters\" (Liste mit 3 kurzen Beispiel-Fragen auf Deutsch, die man diesem Assistenten stellen könnte)."
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val context get() = getApplication<Application>()
@@ -222,6 +234,62 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         persistPresets()
     }
 
+    // ---------- Assistent mit KI-Hilfe entwerfen ----------
+
+    var presetAiBusy by mutableStateOf(false)
+        private set
+    /** Zählt hoch, wenn die KI einen Entwurf geliefert hat – der Editor übernimmt dann die Felder */
+    var presetDraftVersion by mutableStateOf(0)
+        private set
+
+    /** Aus Stichpunkten macht das aktive Modell Name, Symbol, Beschreibung, Anweisung und Starter. */
+    fun draftPresetWithAi(notes: String) {
+        val eng = engine
+        if (eng == null || engineStatus !is EngineStatus.Ready) {
+            toast = "Dafür muss ein Modell geladen sein."
+            return
+        }
+        if (generating || presetAiBusy || notes.isBlank()) return
+        presetAiBusy = true
+        engineSyncKey = null // das Modell führt gleich ein anderes Gespräch
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { eng.startConversation(PRESET_DESIGNER_PROMPT, emptyList(), 0.5) }
+                val raw = StringBuilder()
+                eng.send("Stichpunkte für den Assistenten:\n${notes.trim()}").collect { raw.append(it) }
+                val o = extractJson(raw.toString())
+                    ?: error("Die KI hat kein passendes Ergebnis geliefert – bitte nochmal versuchen.")
+                val base = editingPreset ?: Preset()
+                editingPreset = base.copy(
+                    name = o.optString("name").trim().ifEmpty { base.name }.take(40),
+                    emoji = o.optString("emoji").trim().ifEmpty { base.emoji }.take(4),
+                    description = o.optString("description").trim().ifEmpty { base.description }.take(80),
+                    systemPrompt = o.optString("systemPrompt").trim().ifEmpty { base.systemPrompt },
+                    temperature = o.optDouble("temperature", base.temperature.toDouble()).toFloat().coerceIn(0f, 1.5f),
+                    starters = o.optJSONArray("starters")?.let { a -> List(a.length()) { a.optString(it).trim() } }
+                        ?.filter { it.isNotBlank() }?.take(4)?.ifEmpty { null } ?: base.starters,
+                )
+                presetDraftVersion++
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                toast = e.message ?: "Entwurf fehlgeschlagen"
+            } finally {
+                presetAiBusy = false
+                engineSyncKey = null
+            }
+        }
+    }
+
+    /** Sucht das JSON-Objekt in der Antwort (Modelle schreiben gern ```json … ``` drumherum). */
+    private fun extractJson(text: String): org.json.JSONObject? {
+        val clean = text.replace(Regex("<think>[\\s\\S]*?</think>"), "")
+        val start = clean.indexOf('{')
+        val end = clean.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return runCatching { org.json.JSONObject(clean.substring(start, end + 1)) }.getOrNull()
+    }
+
     private fun persistPresets() {
         val copy = presets.toList()
         viewModelScope.launch(Dispatchers.IO) { runCatching { store.savePresets(copy) } }
@@ -367,6 +435,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         generateJob = viewModelScope.launch {
             var finalText = ""
+            var loopDetected = false
             var error: String? = null
             var tps = 0f
             try {
@@ -385,6 +454,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (chunks == 0) firstChunkAt = System.currentTimeMillis()
                     chunks++
                     streamingText += piece
+                    // Modell hängt in einer Schleife („getgetget…“)? Dann abbrechen
+                    if (!loopDetected && chunks % 8 == 0 && isLooping(streamingText)) {
+                        loopDetected = true
+                        stopRequested = true
+                        eng.stop()
+                    }
                 }
                 val secs = (System.currentTimeMillis() - (if (firstChunkAt > 0) firstChunkAt else start)) / 1000f
                 tps = if (secs > 0.2f) chunks / secs else 0f
@@ -399,6 +474,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val text = when {
                     error != null && finalText.isBlank() -> "Fehler: $error"
                     error != null -> "$finalText\n\n_(abgebrochen: ${error})_"
+                    loopDetected -> cutLoop(finalText).trim() + "\n\n_(Wiederholungsschleife erkannt – Antwort gestoppt. Tipp: neu erzeugen oder in den Einstellungen mehr Kontext für Ollama wählen.)_"
                     finalText.isBlank() && stopRequested -> "_(gestoppt)_"
                     else -> finalText.trim()
                 }
@@ -417,6 +493,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (isFirst && error == null && !stopRequested) makeTitle(chatId, userMsg.text)
         }
+    }
+
+    /**
+     * Erkennt Endlosschleifen: Die letzten 400 Zeichen bestehen nur aus einem kurzen Muster
+     * (bis 50 Zeichen), das sich immer wiederholt.
+     */
+    private fun isLooping(text: String): Boolean {
+        val window = 400
+        if (text.length < window + 50) return false
+        val tail = text.substring(text.length - window - 50)
+        for (period in 1..50) {
+            var same = true
+            for (i in tail.length - window until tail.length) {
+                if (tail[i] != tail[i - period]) { same = false; break }
+            }
+            if (same) return true
+        }
+        return false
+    }
+
+    /** Schneidet den sich wiederholenden Schwanz ab (bis auf ein paar Zeichen). */
+    private fun cutLoop(text: String): String {
+        for (period in 1..50) {
+            var start = text.length - period
+            while (start - period >= 0 && text.regionMatches(start - period, text, start, period)) start -= period
+            if (text.length - start >= 400) return text.substring(0, minOf(text.length, start + period)) + " …"
+        }
+        return text
     }
 
     /** Lange Chats kürzen, damit sie ins Kontextfenster passen (neueste Nachrichten bleiben). */
@@ -521,7 +625,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     old?.close()
                     val e: ChatEngine = when (source) {
                         Source.INTERNAL -> LiteRtEngine(context)
-                        Source.OLLAMA -> OllamaEngine { settings.ollamaHost to settings.ollamaPort }
+                        Source.OLLAMA -> OllamaEngine(
+                            hostProvider = { settings.ollamaHost to settings.ollamaPort },
+                            contextProvider = { settings.ollamaContext },
+                        )
                     }
                     e to e.load(target)
                 }

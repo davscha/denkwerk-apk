@@ -265,6 +265,32 @@ private fun OllamaSection(vm: AppViewModel) {
             Spacer(Modifier.width(10.dp))
             if (vm.ollamaBusy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp), color = Mint)
         }
+        // Kontextgröße: wie viel sich das Modell auf einmal merken kann (Bilder brauchen viel davon)
+        var ctx by remember { mutableStateOf(vm.settings.ollamaContext) }
+        Text("Kontext (Gedächtnis pro Anfrage)", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(4096, 8192, 16384, 32768).forEach { size ->
+                val selected = ctx == size
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) Mint else MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { ctx = size; vm.settings.ollamaContext = size }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Text(
+                        "${size / 1024}k",
+                        fontSize = 13.sp,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+        Text(
+            "Zu wenig Kontext lässt Modelle bei langen Chats oder mehreren Bildern in Schleifen laufen. Mehr braucht mehr Grafikspeicher am PC.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (vm.ollamaStatus.isNotEmpty()) {
             Text(
                 vm.ollamaStatus,

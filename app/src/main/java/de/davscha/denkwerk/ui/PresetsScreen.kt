@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -137,16 +138,63 @@ private val emojiChoices = listOf("✨", "💻", "🎓", "🌍", "💡", "🎨",
 
 @Composable
 private fun PresetEditor(vm: AppViewModel, initial: Preset) {
-    var name by remember(initial.id) { mutableStateOf(initial.name) }
-    var emoji by remember(initial.id) { mutableStateOf(initial.emoji) }
-    var description by remember(initial.id) { mutableStateOf(initial.description) }
-    var prompt by remember(initial.id) { mutableStateOf(initial.systemPrompt) }
-    var temp by remember(initial.id) { mutableFloatStateOf(initial.temperature) }
-    var modelKey by remember(initial.id) { mutableStateOf(initial.modelKey) }
-    var starters by remember(initial.id) { mutableStateOf(initial.starters.joinToString("\n")) }
+    // Neuer KI-Entwurf (presetDraftVersion) setzt alle Felder neu
+    val draft = vm.presetDraftVersion
+    var name by remember(initial.id, draft) { mutableStateOf(initial.name) }
+    var emoji by remember(initial.id, draft) { mutableStateOf(initial.emoji) }
+    var description by remember(initial.id, draft) { mutableStateOf(initial.description) }
+    var prompt by remember(initial.id, draft) { mutableStateOf(initial.systemPrompt) }
+    var temp by remember(initial.id, draft) { mutableFloatStateOf(initial.temperature) }
+    var modelKey by remember(initial.id, draft) { mutableStateOf(initial.modelKey) }
+    var starters by remember(initial.id, draft) { mutableStateOf(initial.starters.joinToString("\n")) }
+    var notes by remember(initial.id) { mutableStateOf("") }
     var modelMenu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val exists = vm.presets.any { it.id == initial.id }
+
+    // Mit KI-Hilfe: Stichpunkte rein, fertiger Assistent raus
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Mint.copy(alpha = 0.10f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("✨ Mit KI erstellen", fontWeight = FontWeight.SemiBold)
+        Text(
+            "Ein paar Stichpunkte reichen – das aktive Modell schreibt Name, Symbol, Anweisung und Starter. Danach kannst du alles anpassen.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = notes,
+            onValueChange = { notes = it },
+            placeholder = { Text("z. B. Gitarrenlehrer, geduldig, Anfänger, Akkorde, kurze Übungen") },
+            minLines = 2,
+            maxLines = 5,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                onClick = {
+                    // bisherige Eingaben behalten, falls die KI etwas nicht liefert
+                    vm.editingPreset = initial.copy(
+                        name = name, emoji = emoji, description = description, systemPrompt = prompt,
+                        temperature = temp, modelKey = modelKey,
+                        starters = starters.lines().filter { it.isNotBlank() },
+                    )
+                    vm.draftPresetWithAi(notes)
+                },
+                enabled = notes.isNotBlank() && !vm.presetAiBusy && !vm.generating,
+                colors = ButtonDefaults.buttonColors(containerColor = Mint),
+            ) { Text(if (vm.presetAiBusy) "Schreibe …" else "Entwurf erstellen") }
+            if (vm.presetAiBusy) {
+                Spacer(Modifier.width(10.dp))
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp), color = Mint)
+            }
+        }
+    }
 
     // Symbol
     Text("Symbol", fontSize = 13.sp, fontWeight = FontWeight.Medium)

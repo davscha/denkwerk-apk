@@ -31,6 +31,11 @@ class Settings(context: Context) {
         get() = prefs.getString("ollamaModel", "") ?: ""
         set(v) = prefs.edit().putString("ollamaModel", v).apply()
 
+    /** Kontextgröße für Ollama (Tokens). Mehr = längeres Gedächtnis, braucht mehr Grafikspeicher am PC. */
+    var ollamaContext: Int
+        get() = prefs.getInt("ollamaContext", 16384)
+        set(v) = prefs.edit().putInt("ollamaContext", v).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

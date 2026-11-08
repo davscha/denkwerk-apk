@@ -98,7 +98,11 @@ class OllamaClient(host: String, port: Int) {
  * Die KI läuft auf dem PC in Ollama; das Tablet schickt die Nachrichten übers Heimnetz.
  * Ollama merkt sich nichts – deshalb hält diese Klasse den Verlauf und schickt ihn jedes Mal mit.
  */
-class OllamaEngine(private val hostProvider: () -> Pair<String, Int>) : ChatEngine {
+class OllamaEngine(
+    private val hostProvider: () -> Pair<String, Int>,
+    /** Kontextgröße in Tokens – Ollama nimmt sonst oft nur 4096, dann „vergisst“ das Modell Bilder und Anfang */
+    private val contextProvider: () -> Int = { 16384 },
+) : ChatEngine {
 
     private var client: OllamaClient? = null
     private var model: String = ""
@@ -147,7 +151,15 @@ class OllamaEngine(private val hostProvider: () -> Pair<String, Int>) : ChatEngi
             .put("messages", JSONArray(history + userMsg))
             .put("stream", true)
             .put("keep_alive", "30m")
-            .put("options", JSONObject().put("temperature", temperature))
+            .put(
+                "options",
+                JSONObject()
+                    .put("temperature", temperature)
+                    .put("num_ctx", contextProvider())
+                    // leichte Strafe für Wiederholungen – verhindert Schleifen wie „getgetget…“
+                    .put("repeat_penalty", 1.1)
+                    .put("repeat_last_n", 256),
+            )
 
         val conn = c.open("/api/chat", timeoutMs = 180_000)
         activeConnection = conn
