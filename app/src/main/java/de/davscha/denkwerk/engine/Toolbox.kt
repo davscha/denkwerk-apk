@@ -31,6 +31,10 @@ class Toolbox(
     private val pageBudget: () -> Int,
     /** Fragt dich, ob gespeichert werden darf (true = ja) */
     private val confirmDownload: suspend (DownloadRequest) -> Boolean,
+    /** Gedächtnis: Fakt merken (gibt null zurück, wenn ausgeschaltet) */
+    private val remember: suspend (String) -> String? = { null },
+    /** Gedächtnis: passende Fakten löschen, gibt die Anzahl zurück */
+    private val forget: suspend (String) -> Int = { 0 },
 ) {
 
     /** Die Werkzeugliste im Format, das Ollama erwartet. */
@@ -84,6 +88,23 @@ class Toolbox(
         )
         put(
             spec(
+                "merken",
+                "Merkt sich dauerhaft einen Fakt über den Nutzer (Name, Wohnort, Vorlieben, Projekte, Haustiere …) für alle künftigen Chats. " +
+                    "Benutzen, wenn der Nutzer \"merk dir\" sagt oder etwas Dauerhaftes über sich erzählt. Kurz, in der dritten Person, z. B. \"Hat einen Kater namens Felix\".",
+                props("fakt" to "Der Fakt in einem kurzen Satz"),
+                required = listOf("fakt"),
+            )
+        )
+        put(
+            spec(
+                "vergessen",
+                "Löscht gemerkte Fakten über den Nutzer, die zu einem Stichwort passen. Benutzen, wenn der Nutzer \"vergiss …\" sagt.",
+                props("fakt" to "Stichwort oder Fakt, der gelöscht werden soll"),
+                required = listOf("fakt"),
+            )
+        )
+        put(
+            spec(
                 "herunterladen",
                 "Speichert Dateien (Bilder, PDFs, Texte, Audio, Video) auf dem Gerät des Nutzers im Ordner Denkwerk/Downloads. " +
                     "Der Nutzer muss vorher zustimmen. Bilder werden danach im Chat angezeigt.",
@@ -106,6 +127,16 @@ class Toolbox(
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
         "bilder_suchen" -> searchImages(args.optString("anfrage"), args.optInt("anzahl", 6).coerceIn(1, 12))
         "herunterladen" -> download(args)
+        "merken" -> {
+            val fakt = args.optString("fakt").trim()
+            if (fakt.isEmpty()) ToolOutput("Kein Fakt angegeben.", "leer", ok = false)
+            else remember(fakt)?.let { ToolOutput("Gemerkt: $it", it) }
+                ?: ToolOutput("Das Gedächtnis ist ausgeschaltet.", "Gedächtnis aus", ok = false)
+        }
+        "vergessen" -> {
+            val n = forget(args.optString("fakt"))
+            ToolOutput(if (n > 0) "$n Fakt(en) gelöscht." else "Nichts Passendes gefunden.", if (n > 0) "$n gelöscht" else "nichts gefunden", ok = n > 0)
+        }
         else -> ToolOutput("Unbekanntes Werkzeug: $name", "unbekanntes Werkzeug", ok = false)
     }
 
@@ -410,6 +441,8 @@ class Toolbox(
             "bilder_auf_seite" -> "🖼️" to "Bilder auf Seite"
             "bilder_suchen" -> "🖼️" to "Bildersuche"
             "herunterladen" -> "⬇️" to "Herunterladen"
+            "merken" -> "🧠" to "Gemerkt"
+            "vergessen" -> "🧹" to "Vergessen"
             else -> "🔧" to name
         }
     }

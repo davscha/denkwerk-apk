@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
@@ -88,6 +89,7 @@ fun SettingsScreen(vm: AppViewModel) {
             ) {
                 DeviceModelsSection(vm)
                 OllamaSection(vm)
+                MemorySection(vm)
                 ToolsSection(vm)
                 BehaviourSection(vm)
                 SpeechSection(vm)
@@ -322,6 +324,77 @@ private fun OllamaSection(vm: AppViewModel) {
                 }
                 if (active) Icon(Icons.Default.Check, "Aktiv", tint = Mint)
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Gedächtnis
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun MemorySection(vm: AppViewModel) {
+    var newFact by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf<String?>(null) }
+    var editText by remember { mutableStateOf("") }
+    Section(Icons.Default.Psychology, "Gedächtnis", "Fakten über dich, die in jeden Chat mitgehen") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Gedächtnis benutzen", fontSize = 14.sp)
+                Text(
+                    "Sag im Chat „Merk dir, dass …“ – Modelle mit Tools merken sich Wichtiges auch selbst und können es mit „Vergiss …“ wieder löschen.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = vm.memoryEnabledState, onCheckedChange = { vm.setMemoryEnabled(it) })
+        }
+        if (vm.memory.isEmpty()) {
+            Text("Noch nichts gemerkt.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        vm.memory.forEach { f ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(start = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (editing == f.id) {
+                    OutlinedTextField(
+                        value = editText,
+                        onValueChange = { editText = it },
+                        singleLine = false,
+                        modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+                    )
+                    IconButton(onClick = { vm.updateMemory(f.id, editText); editing = null }) { Icon(Icons.Default.Check, "Speichern", tint = Mint) }
+                } else {
+                    Text(
+                        f.text,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f).clickable { editing = f.id; editText = f.text }.padding(vertical = 10.dp),
+                    )
+                    IconButton(onClick = { vm.deleteMemory(f.id) }) {
+                        Icon(Icons.Default.Delete, "Vergessen", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = newFact,
+                onValueChange = { newFact = it },
+                placeholder = { Text("z. B. Hat einen Kater namens Felix") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { vm.addMemory(newFact); newFact = "" },
+                enabled = newFact.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Mint),
+            ) { Text("Merken") }
         }
     }
 }

@@ -86,6 +86,22 @@ class ChatStore(private val context: Context) {
         return DocAttachment(name, f.absolutePath, text.length)
     }
 
+    // ---------- Gedächtnis (Memory) ----------
+
+    private val memoryFile get() = File(dataDir, "gedaechtnis.json")
+
+    fun loadMemory(): List<MemoryFact> = runCatching {
+        val arr = JSONObject(memoryFile.readText()).getJSONArray("fakten")
+        List(arr.length()) { MemoryFact.fromJson(arr.getJSONObject(it)) }
+    }.getOrDefault(emptyList())
+
+    fun saveMemory(facts: List<MemoryFact>) {
+        val json = JSONObject().put("version", 1).put("fakten", org.json.JSONArray(facts.map { it.toJson() }))
+        val tmp = File(dataDir, "gedaechtnis.json.tmp")
+        tmp.writeText(json.toString(2))
+        tmp.renameTo(memoryFile)
+    }
+
     // ---------- Prompt-Bibliothek ----------
 
     private val promptsFile get() = File(dataDir, "prompts.json")

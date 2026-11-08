@@ -622,7 +622,8 @@ private fun ToolCard(t: ToolEvent) {
         Spacer(Modifier.width(6.dp))
         Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         if (t.detail.isNotBlank()) {
-            Text(" · ${t.detail}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp))
+            // Suchbegriff kürzer kappen, damit rechts die Anzahl („5 Bilder“) sichtbar bleibt
+            Text(" · ${t.detail}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
         }
         Spacer(Modifier.width(6.dp))
         if (t.running) {

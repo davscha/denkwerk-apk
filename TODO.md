@@ -17,7 +17,7 @@
 ## Werkzeuge (Tools) ✅
 - [x] Tool-Schleife für Ollama-Modelle mit „tools“-Fähigkeit
 - [x] uhrzeit, rechnen, web_suche (DuckDuckGo / SearXNG), seite_lesen, bilder_auf_seite, herunterladen (mit Rückfrage)
-- [ ] Memory als Werkzeug (merken / nachschlagen)
+- [x] Gedächtnis: Fakten über dich in jedem Chat, Werkzeuge merken / vergessen, „Merk dir …“ ohne Tools
 - [ ] ComfyUI-Bild malen als Werkzeug
 - [ ] Timer, Wecker, Kalender
 - [ ] Python auf dem PC ausführen
@@ -31,7 +31,7 @@
 - [x] Prompt-Bibliothek mit `/`-Befehl
 - [x] Mehrere Bilder pro Nachricht (Ollama bis 8, Gerät 1)
 - [x] Dokumente anhängen (PDF, Word, Text, Code, CSV) – „Frag dein Dokument“
-- [ ] Memory: Fakten über dich, die in jeden Chat mitgehen
+- [x] Memory: Fakten über dich, die in jeden Chat mitgehen
 - [ ] Kontextanzeige (z. B. 3.2k/4k Tokens)
 - [ ] Export als PDF, Backup/Wiederherstellen als JSON
 - [ ] Oberfläche in Deutsch, Englisch, Spanisch, Französisch

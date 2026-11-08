@@ -16,6 +16,7 @@ import de.davscha.denkwerk.data.ChatStore
 import de.davscha.denkwerk.data.Preset
 import de.davscha.denkwerk.data.DocAttachment
 import de.davscha.denkwerk.data.SavedPrompt
+import de.davscha.denkwerk.data.MemoryFact
 import de.davscha.denkwerk.data.ToolEvent
 import de.davscha.denkwerk.engine.DownloadRequest
 import de.davscha.denkwerk.engine.ToolStreamEvent
@@ -65,13 +66,14 @@ sealed interface DownloadState {
 /** Ein Eintrag in der Modell-Auswahl oben im Chat. */
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
-private val KNOWN_TOOLS = setOf("uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "herunterladen")
+private val KNOWN_TOOLS = setOf("uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "herunterladen", "merken", "vergessen")
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
     "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite und herunterladen. " +
         "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
         "also keine Linkliste dazu schreiben. " +
+        "Mit merken speicherst du dauerhafte Fakten über den Nutzer (wenn er \"merk dir\" sagt oder Wichtiges über sich erzählt), mit vergessen löschst du sie. " +
         "Rufe Werkzeuge immer über die Werkzeug-Schnittstelle auf und schreibe niemals JSON wie {\"action\": …} in deine Antwort. " +
         "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
         "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
@@ -254,7 +256,64 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.Main) { downloadConfirm = DownloadConfirm(req, d) }
             d.await()
         },
+        remember = { fact -> withContext(Dispatchers.Main) { if (memoryEnabledState) addMemory(fact) else null } },
+        forget = { query -> withContext(Dispatchers.Main) { forgetMemory(query) } },
     )
+
+    // ---------- Gedächtnis (Memory) ----------
+    val memory = mutableStateListOf<MemoryFact>()
+    var memoryEnabledState by mutableStateOf(true)
+        private set
+
+    fun setMemoryEnabled(on: Boolean) {
+        settings.memoryEnabled = on
+        memoryEnabledState = on
+        engineSyncKey = null
+    }
+
+    /** Fakt merken (doppelte werden übersprungen). Gibt den gespeicherten Text zurück. */
+    fun addMemory(text: String): String {
+        val clean = text.trim().trimEnd('.').replace(Regex("\\s+"), " ").take(300)
+        if (memory.none { it.text.equals(clean, ignoreCase = true) }) {
+            memory.add(MemoryFact(text = clean))
+            persistMemory()
+        }
+        return clean
+    }
+
+    fun updateMemory(id: String, text: String) {
+        val i = memory.indexOfFirst { it.id == id }
+        if (i < 0) return
+        if (text.isBlank()) memory.removeAt(i) else memory[i] = memory[i].copy(text = text.trim())
+        persistMemory()
+    }
+
+    fun deleteMemory(id: String) {
+        memory.removeAll { it.id == id }
+        persistMemory()
+    }
+
+    /** Löscht alle Fakten, die das Stichwort enthalten (oder umgekehrt). */
+    fun forgetMemory(query: String): Int {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return 0
+        val hits = memory.filter { val t = it.text.lowercase(); t.contains(q) || q.contains(t) }
+        memory.removeAll(hits)
+        if (hits.isNotEmpty()) persistMemory()
+        return hits.size
+    }
+
+    private fun persistMemory() {
+        engineSyncKey = null // Anweisung ändert sich
+        val copy = memory.toList()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { store.saveMemory(copy) } }
+    }
+
+    /** Block für die Anweisung an die KI */
+    private fun memoryBlock(): String {
+        if (!memoryEnabledState || memory.isEmpty()) return ""
+        val lines = memory.joinToString("\n") { "- ${it.text}" }.take(2500)
+        return "\n\nWas du über den Nutzer weißt (nutze es nur, wenn es zur Frage passt):\n$lines"
 
     // ---------- Vorlesen ----------
     var speakingId by mutableStateOf<String?>(null)
@@ -263,6 +322,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         toolsEnabledState = settings.toolsEnabled
+        memoryEnabledState = settings.memoryEnabled
         refreshStorage()
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
@@ -271,6 +331,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val p = withContext(Dispatchers.IO) { store.loadPresets() }
             presets.clear()
             presets.addAll(p)
+            val mem = withContext(Dispatchers.IO) { store.loadMemory() }
+            memory.clear()
+            memory.addAll(mem)
             val pr = withContext(Dispatchers.IO) { store.loadPrompts() }
             prompts.clear()
             prompts.addAll(pr)
@@ -441,6 +504,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun send(text: String, imagePaths: List<String> = emptyList(), documents: List<DocAttachment> = emptyList()) {
         if (generating) return
         if (text.isBlank() && imagePaths.isEmpty() && documents.isEmpty()) return
+        // „Merk dir …“ ohne Werkzeuge (z. B. Gemma auf dem Gerät): direkt ins Gedächtnis
+        if (memoryEnabledState && !toolsActive) {
+            Regex("^(?:bitte\\s+)?merke?\\s+dir[,:]?\\s+(?:dass\\s+)?(.+)", RegexOption.IGNORE_CASE).find(text.trim())?.let { m ->
+                val fact = addMemory(m.groupValues[1])
+                toast = "🧠 Gemerkt: $fact"
+            }
+        }
         if (engineStatus !is EngineStatus.Ready) {
             toast = when (engineStatus) {
                 is EngineStatus.Loading -> "Das Modell lädt noch – einen Moment."
@@ -522,7 +592,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun syncKey(chatId: String, size: Int): String {
         val (prompt, temp) = promptFor(chats.firstOrNull { it.id == chatId })
-        return "$chatId:$size:$activeLabel:${prompt.hashCode()}:$temp:$toolsActive"
+        return "$chatId:$size:$activeLabel:${prompt.hashCode()}:$temp:$toolsActive:${memoryBlock().hashCode()}"
     }
 
     private fun generate(
@@ -535,7 +605,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val eng = engine ?: return
         val (basePrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
         val useTools = toolsActive && eng is OllamaEngine
-        val systemPrompt = if (useTools) basePrompt + "\n\n" + TOOL_HINT else basePrompt
+        val withMemory = basePrompt + memoryBlock()
+        val systemPrompt = if (useTools) withMemory + "\n\n" + TOOL_HINT else withMemory
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
         streamingTools = emptyList()
         streamingWebImages = emptyList()

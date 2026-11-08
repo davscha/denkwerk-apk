@@ -25,6 +25,8 @@ object PseudoToolCalls {
         "seite_lesen" to "url",
         "bilder_auf_seite" to "url",
         "rechnen" to "ausdruck",
+        "merken" to "fakt",
+        "vergessen" to "fakt",
     )
 
     fun find(text: String, known: Set<String>): List<Found> {

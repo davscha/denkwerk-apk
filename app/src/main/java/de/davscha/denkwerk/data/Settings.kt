@@ -46,6 +46,11 @@ class Settings(context: Context) {
         get() = prefs.getString("searxngUrl", "") ?: ""
         set(v) = prefs.edit().putString("searxngUrl", v).apply()
 
+    /** Gedächtnis: gemerkte Fakten gehen in jeden Chat mit */
+    var memoryEnabled: Boolean
+        get() = prefs.getBoolean("memoryEnabled", true)
+        set(v) = prefs.edit().putBoolean("memoryEnabled", v).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()
