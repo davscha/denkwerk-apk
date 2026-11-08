@@ -87,6 +87,7 @@ private const val TOOL_HINT =
         "also keine Linkliste dazu schreiben. " +
         "Mit merken speicherst du dauerhafte Fakten über den Nutzer (wenn er \"merk dir\" sagt oder Wichtiges über sich erzählt), mit vergessen löschst du sie. " +
         "WICHTIG bei Fakten und Nachrichten: Stütze dich nur auf das, was in den Werkzeug-Ergebnissen steht, und nenne die Quellen. " +
+        "Kennzeichne Belege im Text nur mit [Nummer]; schreibe am Ende KEINE eigene Quellenliste – die Quellen erscheinen automatisch als Kärtchen. " +
         "Erfinde keine Namen, Zitate, Zahlen oder Zusammenhänge; steht etwas nicht in den Quellen, sag das offen. " +
         "Bei politischen oder umstrittenen Themen bleib sachlich und neutral: gib wieder, was berichtet wird und von wem, " +
         "übernimm keine Wertungen ungeprüft (auch nicht die des Nutzers) und nenne verschiedene Sichtweisen, wenn die Quellen sie hergeben. " +
@@ -739,7 +740,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     else -> finalText.trim()
                 }
                 var done = reply.copy(
-                    text = text,
+                    text = if (streamingSources.isNotEmpty()) stripSourceList(text) else text,
                     tokensPerSec = tps,
                     isError = error != null && finalText.isBlank() && streamingTools.isEmpty(),
                     toolEvents = streamingTools.map { if (it.running) it.copy(running = false, summary = "abgebrochen", ok = false) else it },
@@ -795,6 +796,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (text.length - start >= 400) return text.substring(0, minOf(text.length, start + period)) + " …"
         }
         return text
+    }
+
+    /**
+     * Entfernt eine „Quellen:“-Liste am Ende der Antwort (die Quellen stehen schon als Kärtchen darunter).
+     * Nur wenn nach der Überschrift wirklich nur noch Listenpunkte / [1]-Verweise kommen.
+     */
+    private fun stripSourceList(text: String): String {
+        val lines = text.trimEnd().lines()
+        val head = lines.indexOfLast { l ->
+            Regex("^\\s*(#{1,6}\\s*)?[*_]{0,2}(Quellen|Quelle|Quellenangaben|Sources)[*_]{0,2}\\s*:?[*_]{0,2}\\s*$", RegexOption.IGNORE_CASE).matches(l)
+        }
+        if (head < 0) return text
+        val rest = lines.drop(head + 1).filter { it.isNotBlank() }
+        val onlyList = rest.isNotEmpty() && rest.all { Regex("^\\s*([-*•]|\\d+[.)]|\\[\\d+])").containsMatchIn(it) }
+        return if (onlyList) lines.take(head).joinToString("\n").trimEnd() else text
     }
 
     /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */
