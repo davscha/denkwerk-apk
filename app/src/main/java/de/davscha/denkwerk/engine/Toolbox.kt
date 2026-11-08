@@ -109,6 +109,25 @@ class Toolbox(
                 )
             )
         }
+        if (de.davscha.denkwerk.data.TagLibrary.loaded) {
+            put(
+                spec(
+                    "tags_pruefen",
+                    "Prüft einen Bild-Prompt im Danbooru-Tag-Stil gegen die Tag-Liste des Nutzers (18.000 echte Tags): " +
+                        "Schreibvarianten werden zum echten Tag, Doppelte fallen weg, alles wird nach Fächern sortiert; unbekannte Tags bekommen Vorschläge.",
+                    props("tags" to "Die Tag-Liste, durch Kommas getrennt"),
+                    required = listOf("tags"),
+                )
+            )
+            put(
+                spec(
+                    "tags_suchen",
+                    "Sucht passende echte Danbooru-Tags zu einem englischen Stichwort (z. B. \"hair\", \"smil\", \"kimono\"), beliebteste zuerst.",
+                    props("stichwort" to "Englisches Stichwort oder Wortanfang"),
+                    required = listOf("stichwort"),
+                )
+            )
+        }
         put(
             spec(
                 "videos_suchen",
@@ -223,6 +242,8 @@ class Toolbox(
         )
         "video_verstehen" -> videoTranscript(args.optString("url"))
         "bild_rueckwaertssuche" -> reverseSearch(args.optString("bild"))
+        "tags_pruefen" -> checkTags(args.optString("tags"))
+        "tags_suchen" -> findTags(args.optString("stichwort"))
         "anime_bild_quelle" -> sauceNao(args.optString("bild"))
         "auf_seite_suchen" -> siteSearch(
             args.optString("url"),
@@ -639,6 +660,37 @@ class Toolbox(
     /** Gleiche Seite = gleiche Adresse ohne www, Schrägstrich am Ende und Tracking-Parameter */
     private fun canonical(u: String): String =
         u.lowercase().replace("://www.", "://").substringBefore("?utm_").trimEnd('/')
+
+    // ---------- Danbooru-Tags ----------
+
+    private fun checkTags(text: String): ToolOutput {
+        val lib = de.davscha.denkwerk.data.TagLibrary
+        if (text.isBlank()) return ToolOutput("Keine Tags angegeben.", "leer", ok = false)
+        val r = lib.check(text)
+        val forModel = buildString {
+            append("Geprüfter Prompt (übernimm diese Fassung):\n").append(r.prompt).append("\n")
+            if (r.fixed.isNotEmpty()) append("\nKorrigiert: ").append(r.fixed.joinToString("; ") { (a, b) -> "$a → $b" }).append("\n")
+            if (r.unknown.isNotEmpty()) {
+                append("\nNicht in der Tag-Liste (bleiben drin, ggf. ersetzen): ")
+                append(r.unknown.joinToString("; ") { (u, near) -> if (near.isEmpty()) u else "$u (ähnlich: ${near.joinToString(", ")})" })
+                append("\n")
+            }
+            append("\nFächer: ").append(r.bySlot.entries.joinToString("; ") { (s, t) -> "${lib.slotLabel(s)}: ${t.joinToString(", ")}" })
+        }
+        val count = r.prompt.split(", ").count { it.isNotBlank() }
+        val summary = "$count Tags" + (if (r.fixed.isNotEmpty()) " · ${r.fixed.size} korrigiert" else "") +
+            (if (r.unknown.isNotEmpty()) " · ${r.unknown.size} unbekannt" else "")
+        return ToolOutput(forModel, summary)
+    }
+
+    private fun findTags(word: String): ToolOutput {
+        val hits = de.davscha.denkwerk.data.TagLibrary.suggest(word, de.davscha.denkwerk.data.TagField.ANY, 15)
+        if (hits.isEmpty()) return ToolOutput("Keine Tags zu „$word“ gefunden.", "nichts gefunden")
+        return ToolOutput(
+            "Tags zu „$word“ (beliebteste zuerst): " + hits.joinToString(", ") { "${it.name} (${it.count})" },
+            "„$word“ · ${hits.size} Tags",
+        )
+    }
 
     // ---------- Bild-Rückwärtssuche ----------
 
@@ -1302,6 +1354,8 @@ class Toolbox(
             "videos_suchen" -> "🎬" to "Videosuche"
             "video_verstehen" -> "📺" to "Video angeschaut"
             "bild_rueckwaertssuche" -> "🔁" to "Rückwärtssuche"
+            "tags_pruefen" -> "🏷️" to "Tags geprüft"
+            "tags_suchen" -> "🏷️" to "Tag-Suche"
             "anime_bild_quelle" -> "🎨" to "SauceNAO"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"

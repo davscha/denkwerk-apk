@@ -770,6 +770,46 @@ private fun InputBar(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // Tag-Vorschläge beim Tippen (Assistent mit „Tag-Vorschläge“, z. B. Prompt-Schmied)
+        val tagMode = vm.currentPreset?.tagHelper == true && de.davscha.denkwerk.data.TagLibrary.loaded
+        val sep = maxOf(text.lastIndexOf(','), text.lastIndexOf('\n'))
+        val token = text.substring(sep + 1).trimStart()
+        val tagHits = if (tagMode && slashHits == null && token.length >= 2 && !token.endsWith(" "))
+            de.davscha.denkwerk.data.TagLibrary.suggest(token, de.davscha.denkwerk.data.TagField.ANY, 12) else emptyList()
+        if (tagHits.isNotEmpty()) {
+            Row(
+                Modifier
+                    .widthIn(max = 820.dp)
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                tagHits.forEach { t ->
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+                            .clickable {
+                                val before = if (sep >= 0) text.substring(0, sep + 1) + " " else ""
+                                onText(before + t.name + ", ")
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(t.name, fontSize = 13.sp)
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            if (t.count >= 1_000_000) "${t.count / 1_000_000}M" else if (t.count >= 1000) "${t.count / 1000}k" else "${t.count}",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+
         if (slashHits != null) {
             Column(
                 Modifier

@@ -29,6 +29,8 @@ object PseudoToolCalls {
         "videos_suchen" to "anfrage",
         "video_verstehen" to "url",
         "bild_rueckwaertssuche" to "bild",
+        "tags_pruefen" to "tags",
+        "tags_suchen" to "stichwort",
         "anime_bild_quelle" to "bild",
         "rechnen" to "ausdruck",
         "merken" to "fakt",

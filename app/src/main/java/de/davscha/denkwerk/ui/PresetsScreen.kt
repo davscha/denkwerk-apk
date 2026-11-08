@@ -147,6 +147,7 @@ private fun PresetEditor(vm: AppViewModel, initial: Preset) {
     var temp by remember(initial.id, draft) { mutableFloatStateOf(initial.temperature) }
     var modelKey by remember(initial.id, draft) { mutableStateOf(initial.modelKey) }
     var starters by remember(initial.id, draft) { mutableStateOf(initial.starters.joinToString("\n")) }
+    var tagHelper by remember(initial.id, draft) { mutableStateOf(initial.tagHelper) }
     var notes by remember(initial.id) { mutableStateOf("") }
     var modelMenu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -270,6 +271,14 @@ private fun PresetEditor(vm: AppViewModel, initial: Preset) {
         modifier = Modifier.fillMaxWidth(),
     )
 
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Tag-Vorschläge beim Tippen", fontSize = 14.sp)
+            Text("Danbooru-Tags aus deiner Tag-Liste – für Bild-Prompts", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        androidx.compose.material3.Switch(checked = tagHelper, onCheckedChange = { tagHelper = it })
+    }
+
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Button(
             onClick = {
@@ -282,6 +291,7 @@ private fun PresetEditor(vm: AppViewModel, initial: Preset) {
                         temperature = temp,
                         modelKey = modelKey,
                         starters = starters.lines().map { it.trimEnd() }.filter { it.isNotBlank() }.take(4),
+                        tagHelper = tagHelper,
                     )
                 )
             },

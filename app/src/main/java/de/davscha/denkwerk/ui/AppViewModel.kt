@@ -67,6 +67,7 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
+    "tags_pruefen", "tags_suchen",
     "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "bild_rueckwaertssuche", "anime_bild_quelle", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
@@ -365,6 +366,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val speaker = Speaker(app) { id -> viewModelScope.launch(Dispatchers.Main) { speakingId = id } }
 
     init {
+        // Danbooru-Tag-Liste im Hintergrund laden (für Prompt-Schmied und Vorschläge beim Tippen)
+        viewModelScope.launch(Dispatchers.IO) { de.davscha.denkwerk.data.TagLibrary.load(context) }
         toolsEnabledState = settings.toolsEnabled
         memoryEnabledState = settings.memoryEnabled
         refreshStorage()
@@ -821,6 +824,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche", "videos_suchen" -> args.optString("anfrage")
         "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
+        "tags_suchen" -> args.optString("stichwort")
+        "tags_pruefen" -> ""
+
         "bild_rueckwaertssuche", "anime_bild_quelle" -> args.optString("bild").let { b ->
             when {
                 b.isBlank() -> "letztes Bild im Chat"

@@ -22,6 +22,7 @@
 - [ ] Timer, Wecker, Kalender
 - [x] Videosuche mit Kärtchen + YouTube-Videos über Untertitel verstehen
 - [x] Bild-Rückwärtssuche: Google Lens, Yandex-Werkzeug, SauceNAO (optional)
+- [x] Danbooru-Tag-Liste: Prompt-Schmied, tags_pruefen/tags_suchen, Vorschläge beim Tippen
 - [ ] Python auf dem PC ausführen
 
 ## Als Nächstes

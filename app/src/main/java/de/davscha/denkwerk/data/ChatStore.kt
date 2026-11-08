@@ -136,10 +136,21 @@ class ChatStore(private val context: Context) {
             savePresets(Preset.samples)
             return Preset.samples
         }
-        return runCatching {
+        val list = runCatching {
             val arr = JSONObject(f.readText()).getJSONArray("assistenten")
             List(arr.length()) { Preset.fromJson(arr.getJSONObject(it)) }
         }.getOrElse { Preset.samples }
+        // Neue Beispiel-Assistenten einmalig nachliefern (gelöschte bleiben gelöscht)
+        val prefs = context.getSharedPreferences("denkwerk", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("added_prompt_smith", false)) {
+            prefs.edit().putBoolean("added_prompt_smith", true).apply()
+            if (list.none { it.id == Preset.promptSmith.id }) {
+                val withNew = listOf(Preset.promptSmith) + list
+                savePresets(withNew)
+                return withNew
+            }
+        }
+        return list
     }
 
     fun savePresets(presets: List<Preset>) {
