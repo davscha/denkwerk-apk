@@ -67,13 +67,15 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
-    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen",
+    "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite, webseite_durchsuchen und herunterladen. " +
+    "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite, webseite_durchsuchen, auf_seite_suchen und herunterladen. " +
+        "Soll auf einer bestimmten Webseite nach etwas Bestimmtem gesucht werden, nutze zuerst auf_seite_suchen (benutzt das Suchfeld der Seite); " +
+        "findet das nichts, nimm webseite_durchsuchen. " +
         "Nennt der Nutzer eine Webseite und sucht Infos oder Bilder darauf, nutze webseite_durchsuchen – es durchsucht auch die Unterseiten, " +
         "nicht nur die Startseite (bei Bildern bilder=true setzen). seite_lesen nur für genau eine einzelne Seite. " +
         "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
@@ -755,6 +757,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche" -> args.optString("anfrage")
+        "auf_seite_suchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +
+            " · „" + args.optString("suche") + "“"
         "webseite_durchsuchen" -> args.optString("url").removePrefix("https://").removePrefix("http://").removePrefix("www.").substringBefore('/') +
             args.optString("suche").takeIf { it.isNotBlank() }?.let { " · „$it“" }.orEmpty()
         "seite_lesen", "bilder_auf_seite" -> args.optString("url")

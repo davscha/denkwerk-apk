@@ -80,6 +80,19 @@ class Toolbox(
         )
         put(
             spec(
+                "auf_seite_suchen",
+                "Benutzt die eingebaute Suchfunktion (Suchfeld) einer Webseite und liefert die Treffer; die ersten Treffer werden auf Wunsch " +
+                    "gleich gelesen. Benutzen, wenn der Nutzer auf einer bestimmten Webseite etwas suchen möchte (z. B. Shop, Forum, Wiki, Nachrichtenseite).",
+                JSONObject()
+                    .put("url", JSONObject().put("type", "string").put("description", "Adresse der Webseite mit https://"))
+                    .put("suche", JSONObject().put("type", "string").put("description", "Suchbegriff, wie man ihn ins Suchfeld tippen würde"))
+                    .put("treffer_lesen", JSONObject().put("type", "integer").put("description", "Wie viele der ersten Treffer gleich gelesen werden (0 bis 5, Standard 3)"))
+                    .put("bilder", JSONObject().put("type", "boolean").put("description", "true = Bilder aus den Treffern sammeln")),
+                required = listOf("url", "suche"),
+            )
+        )
+        put(
+            spec(
                 "webseite_durchsuchen",
                 "Durchsucht eine GANZE Webseite: folgt den Links zu Unterseiten derselben Seite (bis zu max_seiten) und sammelt " +
                     "Text-Ausschnitte zu einem Suchbegriff und auf Wunsch alle Bilder. Benutzen, wenn der Nutzer eine Adresse nennt und " +
@@ -139,6 +152,12 @@ class Toolbox(
         "web_suche" -> search(args.optString("anfrage"))
         "seite_lesen" -> readPage(args.optString("url"))
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
+        "auf_seite_suchen" -> siteSearch(
+            args.optString("url"),
+            args.optString("suche"),
+            args.optInt("treffer_lesen", 3).coerceIn(0, 5),
+            args.optBoolean("bilder", false) || args.optString("bilder") == "true",
+        )
         "webseite_durchsuchen" -> crawlSite(
             args.optString("url"),
             args.optString("suche"),
@@ -288,6 +307,136 @@ class Toolbox(
             "${list.size} Bilder gefunden",
             webImages = gallery,
         )
+    }
+
+    // ---------- Suchfunktion einer Webseite benutzen ----------
+
+    /**
+     * Benutzt die eingebaute Suche einer Webseite:
+     * 1. OpenSearch-Beschreibung im Seitenkopf, 2. Suchformular im HTML, 3. bekannte Adress-Muster.
+     * Liefert die Trefferliste und liest auf Wunsch die ersten Treffer gleich mit.
+     */
+    private fun siteSearch(url: String, query: String, readTop: Int, wantImages: Boolean): ToolOutput {
+        if (query.isBlank()) return ToolOutput("Kein Suchbegriff angegeben.", "kein Suchbegriff", ok = false)
+        val home = fetch(url)
+        val origin = URL(home.location()).let { "${it.protocol}://${it.host}" }
+        val host = URL(origin).host.removePrefix("www.")
+        val terms = query.lowercase().split(Regex("[^a-zäöüß0-9]+")).filter { it.length >= 3 }
+        fun relevance(t: String): Int { val l = t.lowercase(); return terms.count { l.contains(it) } }
+
+        var results: Document? = null
+        var method = ""
+
+        // 1. OpenSearch: <link rel="search" type="application/opensearchdescription+xml" href="…">
+        home.selectFirst("link[rel=search][type*=opensearch]")?.attr("abs:href")?.takeIf { it.isNotBlank() }?.let { osUrl ->
+            runCatching {
+                val xml = Jsoup.connect(osUrl).userAgent(USER_AGENT).timeout(10_000).ignoreContentType(true)
+                    .parser(org.jsoup.parser.Parser.xmlParser()).get()
+                val template = xml.select("Url, url").firstOrNull { it.attr("type").contains("html") }?.attr("template")
+                if (!template.isNullOrBlank()) {
+                    val searchUrl = template
+                        .replace("{searchTerms}", URLEncoder.encode(query, "UTF-8"))
+                        .replace(Regex("\\{[^}]*\\?}"), "") // optionale Platzhalter wie {startPage?}
+                        .replace(Regex("\\{[^}]*}"), "")
+                    results = fetch(searchUrl)
+                    method = "OpenSearch"
+                }
+            }
+        }
+
+        // 2. Suchformular im HTML
+        if (results == null) {
+            val nameRx = Regex("^(q|s|query|search|suche|suchbegriff|keyword|keywords|term|searchterm|search_query|text|k|w)$", RegexOption.IGNORE_CASE)
+            val best = home.select("form").map { f ->
+                val field = f.selectFirst("input[type=search]")
+                    ?: f.select("input[name]").firstOrNull { nameRx.matches(it.attr("name")) && it.attr("type").lowercase() in setOf("", "text", "search") }
+                var score = 0
+                if (field != null) score += 3
+                if (field?.attr("type") == "search") score += 2
+                if (Regex("search|such|find", RegexOption.IGNORE_CASE).containsMatchIn(f.attr("action") + f.attr("id") + f.attr("class") + f.attr("role"))) score += 2
+                if (f.select("input[type=password]").isNotEmpty()) score = -10 // Login-Formular
+                Triple(f, field, score)
+            }.filter { it.second != null && it.third > 0 }.maxByOrNull { it.third }
+            if (best != null) {
+                val (form, field, _) = best
+                runCatching {
+                    val action = form.attr("abs:action").ifBlank { home.location() }
+                    val data = linkedMapOf<String, String>()
+                    form.select("input[type=hidden][name]").forEach { data[it.attr("name")] = it.attr("value") }
+                    data[field!!.attr("name").ifBlank { "q" }] = query
+                    val conn = Jsoup.connect(action).userAgent(USER_AGENT).timeout(20_000).followRedirects(true).data(data)
+                    results = if (form.attr("method").equals("post", ignoreCase = true)) conn.post() else conn.get()
+                    method = "Suchformular"
+                }
+            }
+        }
+
+        // 3. Bekannte Muster ausprobieren (WordPress, typische Shops/Foren)
+        if (results == null) {
+            val q = URLEncoder.encode(query, "UTF-8")
+            for (pattern in listOf("/?s=$q", "/search?q=$q", "/suche?q=$q", "/search?query=$q", "/search/?q=$q", "/suche/?s=$q")) {
+                val d = runCatching { fetch(origin + pattern) }.getOrNull() ?: continue
+                val differs = canonical(d.location()) != canonical(home.location())
+                if (differs && terms.any { d.text().lowercase().contains(it) }) {
+                    results = d
+                    method = "Adresse $pattern".substringBefore("=") + "="
+                    break
+                }
+            }
+        }
+
+        val res = results
+            ?: return ToolOutput(
+                "Auf $host wurde keine nutzbare Suchfunktion gefunden (vielleicht lädt die Suche per JavaScript). " +
+                    "Versuche stattdessen webseite_durchsuchen.",
+                "keine Suchfunktion gefunden",
+                ok = false,
+            )
+
+        // Treffer: Links auf derselben Webseite, passende zuerst (Menüs/Kopf/Fuß vorher entfernen)
+        val resultImages = if (wantImages) pageImages(res) else linkedMapOf()
+        val content = res.clone().apply { select("nav, header, footer, aside, [role=navigation], form").remove() }
+        val links = linkedMapOf<String, String>()
+        for (a in content.select("a[href]")) {
+            val link = a.attr("abs:href").substringBefore('#')
+            val text = a.text().trim()
+            if (!link.startsWith("http") || text.length < 6) continue
+            val linkHost = runCatching { URL(link).host.removePrefix("www.") }.getOrNull() ?: continue
+            if (linkHost != host || canonical(link) == canonical(res.location())) continue
+            if (Regex("login|anmelden|warenkorb|cart|account|javascript:|mailto:|[?&](page|p|start|offset)=").containsMatchIn(link.lowercase())) continue
+            links.putIfAbsent(link, text.take(140))
+        }
+        val ranked = links.entries.sortedByDescending { (l, t) -> relevance("$t $l") }.take(12)
+        if (ranked.isEmpty()) {
+            val text = pageLines(res).joinToString("\n").take(pageBudget())
+            return ToolOutput("Suchergebnis auf $host ($method) für „$query“:\n$text", "$method · Ergebnisseite gelesen")
+        }
+
+        // Die ersten Treffer gleich lesen
+        val budget = pageBudget()
+        val read = StringBuilder()
+        val images = linkedMapOf<String, Pair<String, String>>()
+        resultImages.forEach { (src, alt) -> images.putIfAbsent(src, alt to res.location()) }
+        ranked.take(readTop).forEach { (link, title) ->
+            val d = runCatching { fetch(link) }.getOrNull() ?: return@forEach
+            if (wantImages) pageImages(d).forEach { (src, alt) -> images.putIfAbsent(src, alt to d.location()) }
+            val lines = pageLines(d)
+            val hits = lines.filter { relevance(it) > 0 }.ifEmpty { lines.take(8) }
+            read.append("### ").append(title).append('\n').append(link).append('\n')
+            read.append(hits.joinToString("\n").take((budget / readTop.coerceAtLeast(1)).coerceIn(500, 4000))).append("\n\n")
+        }
+        val gallery = images.entries.sortedByDescending { (src, v) -> relevance(v.first + " " + src) }.take(24)
+            .map { (src, v) -> de.davscha.denkwerk.data.WebImage(src, title = v.first, source = v.second) }
+
+        val forModel = buildString {
+            append("Suche auf $host über $method nach „$query“ – ${ranked.size} Treffer:\n")
+            ranked.forEachIndexed { i, (l, t) -> append("${i + 1}. $t – $l\n") }
+            if (read.isNotEmpty()) append("\nInhalt der ersten Treffer:\n").append(read.toString().take(budget))
+            if (gallery.isNotEmpty()) append("\n(${gallery.size} Bilder werden dem Nutzer bereits als Galerie angezeigt – nicht als Links auflisten.)")
+        }
+        val summary = "$method · ${ranked.size} Treffer" + (if (readTop > 0) " · ${minOf(readTop, ranked.size)} gelesen" else "") +
+            (if (gallery.isNotEmpty()) " · ${gallery.size} Bilder" else "")
+        return ToolOutput(forModel, summary, webImages = gallery)
     }
 
     // ---------- Ganze Webseite durchsuchen ----------
@@ -563,6 +712,7 @@ class Toolbox(
             "bilder_auf_seite" -> "🖼️" to "Bilder auf Seite"
             "bilder_suchen" -> "🖼️" to "Bildersuche"
             "webseite_durchsuchen" -> "🕸️" to "Webseite durchsucht"
+            "auf_seite_suchen" -> "🔎" to "Seitensuche"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"
             "vergessen" -> "🧹" to "Vergessen"
