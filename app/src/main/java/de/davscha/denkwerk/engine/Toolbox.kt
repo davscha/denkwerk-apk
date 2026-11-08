@@ -645,13 +645,19 @@ class Toolbox(
     /** Welches Bild gesucht wird: Web-Adresse, erlaubter Dateipfad oder das letzte Bild im Chat */
     private fun resolveImage(arg: String): String {
         val a = arg.trim()
-        if (a.startsWith("http")) return a
+        val inChat = chatImages()
+        if (a.startsWith("http")) {
+            // Modelle erfinden gern Bild-Adressen – nur Adressen nehmen, die wirklich im Chat vorkommen,
+            // sonst das angehängte Bild
+            if (a in inChat || inChat.isEmpty()) return a
+            return inChat.first()
+        }
         if (a.isNotEmpty()) {
             val f = File(a).canonicalFile
             val ok = f.exists() && allowedDirs().any { d -> f.path.startsWith(d.canonicalFile.path) }
             if (ok) return f.path
         }
-        return chatImages().firstOrNull() ?: throw IOException("Kein Bild gefunden – bitte ein Bild anhängen oder eine Bild-Adresse nennen")
+        return inChat.firstOrNull() ?: throw IOException("Kein Bild gefunden – bitte ein Bild anhängen oder eine Bild-Adresse nennen")
     }
 
     private fun reverseSearch(arg: String): ToolOutput {

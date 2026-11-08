@@ -211,7 +211,20 @@ class OllamaEngine(
                     ?: runCatching { JSONObject(fn.optString("arguments")) }.getOrDefault(JSONObject())
                 emit(ToolStreamEvent.ToolStart(name, args))
                 val out = runCatching { runTool(name, args) }
-                    .getOrElse { e -> ToolOutput("Fehler: ${e.message ?: e.javaClass.simpleName}", "Fehler: ${e.message}", ok = false) }
+                    .getOrElse { e ->
+                        val msg = when (e) {
+                            is java.io.FileNotFoundException -> "Adresse nicht erreichbar (404)"
+                            is java.net.UnknownHostException -> "keine Internetverbindung oder Adresse unbekannt"
+                            is java.net.SocketTimeoutException -> "Zeitüberschreitung"
+                            else -> e.message ?: e.javaClass.simpleName
+                        }
+                        ToolOutput(
+                            "FEHLGESCHLAGEN: Dieses Werkzeug hat KEIN Ergebnis geliefert ($msg). " +
+                                "Behaupte nicht, dass es etwas gefunden hat.",
+                            "Fehler: $msg",
+                            ok = false,
+                        )
+                    }
                 emit(ToolStreamEvent.ToolDone(name, out))
                 turn += JSONObject().put("role", "tool").put("tool_name", name).put("content", out.forModel)
                 if (stopped) break

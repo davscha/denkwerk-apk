@@ -88,6 +88,10 @@ private const val TOOL_HINT =
         "Mit merken speicherst du dauerhafte Fakten über den Nutzer (wenn er \"merk dir\" sagt oder Wichtiges über sich erzählt), mit vergessen löschst du sie. " +
         "WICHTIG bei Fakten und Nachrichten: Stütze dich nur auf das, was in den Werkzeug-Ergebnissen steht, und nenne die Quellen. " +
         "Kennzeichne Belege im Text nur mit [Nummer]; schreibe am Ende KEINE eigene Quellenliste – die Quellen erscheinen automatisch als Kärtchen. " +
+        "Sag immer ehrlich, woher eine Information stammt: aus einem Werkzeug-Ergebnis, aus deinem eigenen Wissen oder aus deiner Bildbeschreibung. " +
+        "Ist ein Werkzeug fehlgeschlagen, behaupte nie, es habe etwas ergeben. " +
+        "Nenne Namen von Personen auf Fotos nur, wenn sie aus Quellen hervorgehen (Bildunterschrift, Artikel, Fundstelle der Rückwärtssuche) – " +
+        "rate sie nicht allein aus dem Gesicht; sag sonst, dass du die Person nicht sicher bestimmen kannst. " +
         "Erfinde keine Namen, Zitate, Zahlen oder Zusammenhänge; steht etwas nicht in den Quellen, sag das offen. " +
         "Bei politischen oder umstrittenen Themen bleib sachlich und neutral: gib wieder, was berichtet wird und von wem, " +
         "übernimm keine Wertungen ungeprüft (auch nicht die des Nutzers) und nenne verschiedene Sichtweisen, wenn die Quellen sie hergeben. " +
