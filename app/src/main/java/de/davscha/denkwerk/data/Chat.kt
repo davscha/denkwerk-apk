@@ -6,6 +6,18 @@ import java.util.UUID
 
 fun newId(): String = UUID.randomUUID().toString().take(12)
 
+/** Eine Fassung einer KI-Antwort – bei „Neu erzeugen“ bleiben alle Fassungen erhalten (‹ 1/3 ›). */
+data class Variant(val text: String, val modelLabel: String, val tokensPerSec: Float, val isError: Boolean) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("text", text).put("modelLabel", modelLabel).put("tokensPerSec", tokensPerSec.toDouble()).put("isError", isError)
+
+    companion object {
+        fun fromJson(o: JSONObject) = Variant(
+            o.optString("text"), o.optString("modelLabel"), o.optDouble("tokensPerSec", 0.0).toFloat(), o.optBoolean("isError"),
+        )
+    }
+}
+
 /** Eine Nachricht im Chat – von dir oder von der KI. */
 data class ChatMessage(
     val id: String = newId(),
@@ -20,7 +32,19 @@ data class ChatMessage(
     /** true = statt einer Antwort kam ein Fehler */
     val isError: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
+    /** Alle Fassungen dieser Antwort (leer = nur eine); die angezeigte steht zusätzlich in text/modelLabel */
+    val variants: List<Variant> = emptyList(),
+    val variantIndex: Int = 0,
 ) {
+    /** Die angezeigte Fassung als Variant */
+    fun asVariant() = Variant(text, modelLabel, tokensPerSec, isError)
+
+    /** Andere Fassung anzeigen */
+    fun showVariant(index: Int): ChatMessage {
+        val v = variants.getOrNull(index) ?: return this
+        return copy(text = v.text, modelLabel = v.modelLabel, tokensPerSec = v.tokensPerSec, isError = v.isError, variantIndex = index)
+    }
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
         .put("fromUser", fromUser)
@@ -30,6 +54,8 @@ data class ChatMessage(
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
         .put("createdAt", createdAt)
+        .put("variants", JSONArray(variants.map { it.toJson() }))
+        .put("variantIndex", variantIndex)
 
     companion object {
         fun fromJson(o: JSONObject) = ChatMessage(
@@ -43,6 +69,8 @@ data class ChatMessage(
             tokensPerSec = o.optDouble("tokensPerSec", 0.0).toFloat(),
             isError = o.optBoolean("isError"),
             createdAt = o.optLong("createdAt", System.currentTimeMillis()),
+            variants = o.optJSONArray("variants")?.let { a -> List(a.length()) { Variant.fromJson(a.getJSONObject(it)) } }.orEmpty(),
+            variantIndex = o.optInt("variantIndex", 0),
         )
     }
 }
@@ -55,6 +83,8 @@ data class Chat(
     val pinned: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    /** Mit welchem Assistenten (Preset) der Chat läuft – null = Standard */
+    val presetId: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("format", "denkwerk-chat")
@@ -64,6 +94,7 @@ data class Chat(
         .put("pinned", pinned)
         .put("createdAt", createdAt)
         .put("updatedAt", updatedAt)
+        .put("presetId", presetId ?: "")
         .put("messages", JSONArray(messages.map { it.toJson() }))
 
     companion object {
@@ -76,6 +107,7 @@ data class Chat(
                 pinned = o.optBoolean("pinned"),
                 createdAt = o.optLong("createdAt", System.currentTimeMillis()),
                 updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
+                presetId = o.optString("presetId").ifEmpty { null },
             )
         }
 

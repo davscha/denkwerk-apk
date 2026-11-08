@@ -59,6 +59,30 @@ class ChatStore(private val context: Context) {
         f.absolutePath
     }.getOrNull()
 
+    // ---------- Assistenten (Presets) ----------
+
+    private val presetsFile get() = File(dataDir, "assistenten.json")
+
+    /** Alle Assistenten; beim ersten Start kommen die Beispiele hinein. */
+    fun loadPresets(): List<Preset> {
+        val f = presetsFile
+        if (!f.exists()) {
+            savePresets(Preset.samples)
+            return Preset.samples
+        }
+        return runCatching {
+            val arr = JSONObject(f.readText()).getJSONArray("assistenten")
+            List(arr.length()) { Preset.fromJson(arr.getJSONObject(it)) }
+        }.getOrElse { Preset.samples }
+    }
+
+    fun savePresets(presets: List<Preset>) {
+        val json = JSONObject().put("version", 1).put("assistenten", org.json.JSONArray(presets.map { it.toJson() }))
+        val tmp = File(dataDir, "assistenten.json.tmp")
+        tmp.writeText(json.toString(2))
+        tmp.renameTo(presetsFile)
+    }
+
     /** Chat als Markdown-Text (zum Teilen). */
     fun toMarkdown(chat: Chat): String = buildString {
         appendLine("# ${chat.title}")

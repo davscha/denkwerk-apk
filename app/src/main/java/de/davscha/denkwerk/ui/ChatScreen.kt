@@ -40,6 +40,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -112,7 +115,13 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (messages.isEmpty()) {
-                EmptyState(onSuggestion = { text -> vm.send(text) })
+                EmptyState(
+                    vm = vm,
+                    onSuggestion = { text ->
+                        // Starter mit ":" am Ende kommen ins Eingabefeld, damit du weiterschreiben kannst
+                        if (text.trimEnd().endsWith(":")) input = text.trimEnd() + " " else vm.send(text)
+                    },
+                )
             } else {
                 MessageList(
                     vm = vm,
@@ -204,7 +213,21 @@ private fun TopBar(vm: AppViewModel, onMenu: (() -> Unit)?) {
             ModelMenu(vm, open) { open = false }
         }
 
-        IconButton(onClick = { vm.newChat() }) { Icon(Icons.Default.EditNote, "Neuer Chat") }
+        vm.currentPreset?.let { p ->
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .clickable { vm.openPresets() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(p.emoji, fontSize = 14.sp)
+                Spacer(Modifier.width(4.dp))
+                Text(p.name, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 120.dp))
+            }
+        }
+        IconButton(onClick = { vm.newChat(vm.currentPreset?.id) }) { Icon(Icons.Default.EditNote, "Neuer Chat") }
     }
 }
 
@@ -309,21 +332,35 @@ private val suggestions = listOf(
 )
 
 @Composable
-private fun EmptyState(onSuggestion: (String) -> Unit) {
+private fun EmptyState(vm: AppViewModel, onSuggestion: (String) -> Unit) {
+    val preset = vm.currentPreset
+    // Mit Assistent: seine Starter; sonst die allgemeinen Vorschläge
+    val cards = if (preset != null && preset.starters.isNotEmpty()) {
+        preset.starters.map { Suggestion(Icons.Default.AutoAwesome, it.trimEnd(':', ' '), it) }
+    } else suggestions
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(Mint),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(30.dp)) }
-        Spacer(Modifier.height(16.dp))
-        Text("Wobei kann ich helfen?", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        if (preset != null) {
+            PresetAvatar(preset.emoji, 64)
+            Spacer(Modifier.height(12.dp))
+            Text(preset.name, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            if (preset.description.isNotBlank()) {
+                Text(preset.description, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            }
+        } else {
+            Box(
+                Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)).background(Mint),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(30.dp)) }
+            Spacer(Modifier.height(16.dp))
+            Text("Wobei kann ich helfen?", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+        }
         Spacer(Modifier.height(28.dp))
         Column(Modifier.widthIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            suggestions.chunked(2).forEach { row ->
+            cards.chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { s ->
                         Column(
@@ -469,6 +506,17 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
                     ) { vm.toggleSpeak(m) }
                 }
                 if (isLast && !vm.generating) SmallAction(Icons.Default.Refresh, "Neu erzeugen") { vm.regenerate() }
+                // Fassungen durchblättern: ‹ 2/3 ›
+                if (m.variants.size > 1) {
+                    val canSwitch = !vm.generating
+                    SmallAction(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Vorherige Fassung") {
+                        if (canSwitch) vm.showVariant(m.id, m.variantIndex - 1)
+                    }
+                    Text("${m.variantIndex + 1}/${m.variants.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SmallAction(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Nächste Fassung") {
+                        if (canSwitch) vm.showVariant(m.id, m.variantIndex + 1)
+                    }
+                }
                 Spacer(Modifier.width(6.dp))
                 val info = buildString {
                     append(m.modelLabel.substringBefore(" · "))

@@ -31,6 +31,7 @@ fun App(vm: AppViewModel) {
         val wide = maxWidth >= 840.dp
         when (vm.screen) {
             Screen.Settings -> SettingsScreen(vm)
+            Screen.Presets -> PresetsScreen(vm)
             Screen.Chat -> if (wide) {
                 Row(Modifier.fillMaxSize()) {
                     Sidebar(vm, onPicked = {}, modifier = Modifier.width(300.dp).fillMaxHeight())

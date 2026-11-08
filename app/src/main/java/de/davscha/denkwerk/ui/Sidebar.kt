@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
@@ -120,6 +121,54 @@ fun Sidebar(vm: AppViewModel, onPicked: () -> Unit, modifier: Modifier = Modifie
         }
         Spacer(Modifier.height(8.dp))
 
+        // Assistenten (eigene GPTs): antippen = neuer Chat mit diesem Assistenten
+        if (query.isBlank()) {
+            Text(
+                "Assistenten",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp, top = 6.dp, bottom = 4.dp),
+            )
+            vm.presets.take(5).forEach { p ->
+                Row(
+                    Modifier
+                        .padding(horizontal = 8.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (vm.currentChat == null && vm.pendingPresetId == p.id) MaterialTheme.colorScheme.surfaceVariant
+                            else MaterialTheme.colorScheme.surface
+                        )
+                        .clickable { vm.newChat(p.id); onPicked() }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(p.emoji, fontSize = 16.sp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(p.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Row(
+                Modifier
+                    .padding(horizontal = 8.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { vm.openPresets(); onPicked() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Apps, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (vm.presets.size > 5) "Alle ${vm.presets.size} Assistenten …" else "Assistenten verwalten …",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 8.dp))
+        }
+
         val filtered = vm.chats.filter { c ->
             query.isBlank() || c.title.contains(query, true) || c.messages.any { it.text.contains(query, true) }
         }.sortedByDescending { it.updatedAt }
@@ -150,6 +199,7 @@ fun Sidebar(vm: AppViewModel, onPicked: () -> Unit, modifier: Modifier = Modifie
                 items(list, key = { it.id }) { chat ->
                     ChatRow(
                         chat = chat,
+                        emoji = vm.presetOf(chat)?.emoji,
                         selected = chat.id == vm.currentChatId,
                         onClick = { vm.openChat(chat.id); onPicked() },
                         onRename = { renaming = chat },
@@ -216,6 +266,7 @@ fun Sidebar(vm: AppViewModel, onPicked: () -> Unit, modifier: Modifier = Modifie
 @Composable
 private fun ChatRow(
     chat: Chat,
+    emoji: String?,
     selected: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
@@ -236,6 +287,7 @@ private fun ChatRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (chat.pinned) Icon(Icons.Default.PushPin, null, modifier = Modifier.size(14.dp), tint = Mint)
+            if (emoji != null) Text(emoji, fontSize = 13.sp)
             Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, modifier = Modifier.weight(1f))
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

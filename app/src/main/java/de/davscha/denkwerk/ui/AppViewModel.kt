@@ -13,6 +13,8 @@ import androidx.lifecycle.viewModelScope
 import de.davscha.denkwerk.data.Chat
 import de.davscha.denkwerk.data.ChatMessage
 import de.davscha.denkwerk.data.ChatStore
+import de.davscha.denkwerk.data.Preset
+import de.davscha.denkwerk.data.Variant
 import de.davscha.denkwerk.data.Settings
 import de.davscha.denkwerk.data.Source
 import de.davscha.denkwerk.engine.Accelerator
@@ -35,7 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-enum class Screen { Chat, Settings }
+enum class Screen { Chat, Settings, Presets }
 
 /** Zustand des Sprachmodells, das gerade benutzt wird. */
 sealed interface EngineStatus {
@@ -66,7 +68,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     fun openSettings() { screen = Screen.Settings }
-    fun back() { screen = Screen.Chat }
+    fun openPresets() { editingPreset = null; screen = Screen.Presets }
+    fun back() {
+        if (screen == Screen.Presets && editingPreset != null) editingPreset = null else screen = Screen.Chat
+    }
+
+    // ---------- Assistenten (Presets) ----------
+    val presets = mutableStateListOf<Preset>()
+    /** Assistent für den nächsten neuen Chat (solange noch keine Nachricht geschickt wurde) */
+    var pendingPresetId by mutableStateOf<String?>(null)
+        private set
+    /** Assistent, der gerade im Editor offen ist */
+    var editingPreset by mutableStateOf<Preset?>(null)
+
+    /** Assistent des offenen (oder gleich entstehenden) Chats */
+    val currentPreset: Preset?
+        get() = (currentChat?.presetId ?: pendingPresetId.takeIf { currentChat == null })?.let { id -> presets.firstOrNull { it.id == id } }
+
+    fun presetOf(chat: Chat?): Preset? = chat?.presetId?.let { id -> presets.firstOrNull { it.id == id } }
 
     // ---------- Chats ----------
     val chats = mutableStateListOf<Chat>()
@@ -135,6 +154,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
             chats.clear()
             chats.addAll(loaded)
+            val p = withContext(Dispatchers.IO) { store.loadPresets() }
+            presets.clear()
+            presets.addAll(p)
         }
         if (settings.ollamaHost.isNotBlank()) testOllama(silent = true)
         loadActiveModel()
@@ -166,10 +188,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Chats verwalten
     // =====================================================================
 
-    fun newChat() {
+    fun newChat(presetId: String? = null) {
         if (generating) stop()
         currentChatId = null
+        pendingPresetId = presetId
         screen = Screen.Chat
+        // Lieblingsmodell des Assistenten wählen, falls vorhanden
+        val preset = presets.firstOrNull { it.id == presetId } ?: return
+        if (preset.modelKey.isBlank()) return
+        val choice = modelChoices.firstOrNull { "${it.source}:${it.id}" == preset.modelKey }
+        when {
+            choice == null -> toast = "Lieblingsmodell von ${preset.name} ist gerade nicht verfügbar – nutze das aktuelle."
+            !isActive(choice) -> select(choice)
+        }
+    }
+
+    // ---------- Assistenten bearbeiten ----------
+
+    fun editPreset(preset: Preset?) { editingPreset = preset ?: Preset() }
+
+    fun savePreset(preset: Preset) {
+        val i = presets.indexOfFirst { it.id == preset.id }
+        if (i >= 0) presets[i] = preset else presets.add(preset)
+        editingPreset = null
+        engineSyncKey = null
+        persistPresets()
+    }
+
+    fun deletePreset(id: String) {
+        presets.removeAll { it.id == id }
+        if (pendingPresetId == id) pendingPresetId = null
+        editingPreset = null
+        persistPresets()
+    }
+
+    private fun persistPresets() {
+        val copy = presets.toList()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { store.savePresets(copy) } }
     }
 
     fun openChat(id: String) {
@@ -220,7 +275,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        val base = currentChat ?: Chat(title = Chat.titleFrom(text))
+        val base = currentChat ?: Chat(title = Chat.titleFrom(text), presetId = pendingPresetId)
         val userMsg = ChatMessage(fromUser = true, text = text.trim(), imagePaths = imagePaths.take(maxImages.coerceAtLeast(1)))
         val history = base.messages
         val chat = base.copy(messages = history + userMsg)
@@ -229,7 +284,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         generate(chat.id, history, userMsg, isFirst = history.isEmpty())
     }
 
-    /** Letzte Antwort verwerfen und neu schreiben lassen. */
+    /** Letzte Antwort neu schreiben lassen – die alte Fassung bleibt erhalten (‹ 1/2 ›). */
     fun regenerate() {
         if (generating) return
         val chat = currentChat ?: return
@@ -237,8 +292,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (lastUser < 0) return
         val history = chat.messages.take(lastUser)
         val userMsg = chat.messages[lastUser]
+        val old = chat.messages.drop(lastUser + 1).lastOrNull { !it.fromUser }
+        val previous = when {
+            old == null -> emptyList()
+            old.variants.isEmpty() -> listOf(old.asVariant())
+            else -> old.variants
+        }
         upsert(chat.copy(messages = history + userMsg))
-        generate(chat.id, history, userMsg, isFirst = false)
+        generate(chat.id, history, userMsg, isFirst = false, previousVariants = previous)
+    }
+
+    /** Zwischen den Fassungen einer Antwort blättern. */
+    fun showVariant(messageId: String, index: Int) {
+        if (generating) return
+        val chat = currentChat ?: return
+        val msg = chat.messages.firstOrNull { it.id == messageId } ?: return
+        if (index !in msg.variants.indices || index == msg.variantIndex) return
+        upsert(chat.copy(messages = chat.messages.map { if (it.id == messageId) it.showVariant(index) else it }), touch = false)
+        engineSyncKey = null // das Modell kennt jetzt eine andere Antwort
     }
 
     /** Eine eigene Nachricht ändern: alles danach fällt weg, die KI antwortet neu. */
@@ -265,11 +336,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun syncKey(chatId: String, size: Int) =
-        "$chatId:$size:$activeLabel:${settings.systemPrompt.hashCode()}:${settings.temperature}"
+    /** Anweisung und Temperatur: vom Assistenten des Chats, sonst aus den Einstellungen. */
+    private fun promptFor(chat: Chat?): Pair<String, Float> {
+        val p = presetOf(chat)
+        return if (p != null && p.systemPrompt.isNotBlank()) p.systemPrompt to p.temperature
+        else settings.systemPrompt to (p?.temperature ?: settings.temperature)
+    }
 
-    private fun generate(chatId: String, history: List<ChatMessage>, userMsg: ChatMessage, isFirst: Boolean) {
+    private fun syncKey(chatId: String, size: Int): String {
+        val (prompt, temp) = promptFor(chats.firstOrNull { it.id == chatId })
+        return "$chatId:$size:$activeLabel:${prompt.hashCode()}:$temp"
+    }
+
+    private fun generate(
+        chatId: String,
+        history: List<ChatMessage>,
+        userMsg: ChatMessage,
+        isFirst: Boolean,
+        previousVariants: List<Variant> = emptyList(),
+    ) {
         val eng = engine ?: return
+        val (systemPrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
@@ -286,7 +373,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val key = syncKey(chatId, history.size)
                 if (engineSyncKey != key) {
                     withContext(Dispatchers.IO) {
-                        eng.startConversation(settings.systemPrompt, trimHistory(history), settings.temperature.toDouble())
+                        eng.startConversation(systemPrompt, trimHistory(history), temperature.toDouble())
                     }
                 }
                 engineSyncKey = null // stimmt erst wieder, wenn die Antwort vollständig ist
@@ -315,7 +402,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     finalText.isBlank() && stopRequested -> "_(gestoppt)_"
                     else -> finalText.trim()
                 }
-                val done = reply.copy(text = text, tokensPerSec = tps, isError = error != null && finalText.isBlank())
+                var done = reply.copy(text = text, tokensPerSec = tps, isError = error != null && finalText.isBlank())
+                if (previousVariants.isNotEmpty()) {
+                    val all = previousVariants + done.asVariant()
+                    done = done.copy(variants = all, variantIndex = all.lastIndex)
+                }
                 chats.firstOrNull { it.id == chatId }?.let { c ->
                     upsert(c.copy(messages = c.messages.map { if (it.id == reply.id) done else it }))
                 }

@@ -15,8 +15,10 @@
 - [x] Gemma-Modelle aus CharacterFun/Modelle mitbenutzen
 
 ## Als Nächstes
-- [ ] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
-- [ ] Eigene GPTs / Presets (System-Prompt, Temperatur, Lieblingsmodell)
+- [x] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
+- [x] Eigene Assistenten / GPTs (Symbol, Anweisung, Temperatur, Lieblingsmodell, Gesprächs-Starter)
+- [ ] Assistenten mit KI-Hilfe erstellen (Stichpunkte → fertige Anweisung)
+- [ ] Assistenten teilen (Export/Import als Datei)
 - [ ] Prompt-Bibliothek mit `/`-Befehl
 - [x] Mehrere Bilder pro Nachricht (Ollama bis 8, Gerät 1)
 - [ ] Dokumente anhängen (PDF/Text) – „Frag dein Dokument“
