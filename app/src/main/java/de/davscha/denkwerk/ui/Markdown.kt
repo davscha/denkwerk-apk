@@ -279,6 +279,18 @@ private fun TableBlock(lines: List<String>, cellBg: Color) {
     }
 }
 
+/** Malen-Funktion für Prompt-Blöcke (vom Chat bereitgestellt; null = ComfyUI nicht eingerichtet) */
+val LocalPaint = androidx.compose.runtime.staticCompositionLocalOf<((String) -> Unit)?> { null }
+
+/** Sieht der Block wie ein positiver Bild-Prompt aus? (Kommaliste, kein Code, kein Negativ-Prompt) */
+private fun looksLikeImagePrompt(language: String, code: String): Boolean {
+    if (language.lowercase() !in setOf("", "text", "txt", "prompt", "positive", "plaintext")) return false
+    val t = code.trim().lowercase()
+    if (t.count { it == ',' } < 3 || t.contains('{') || t.contains(';') || t.contains("=")) return false
+    if (t.startsWith("worst quality") || t.startsWith("lowres") || t.startsWith("bad ") || t.startsWith("negative")) return false
+    return true
+}
+
 /** Code-Block mit Sprache, Kopier-Knopf und waagerechtem Scrollen. */
 @Composable
 private fun CodeBlock(language: String, code: String) {
@@ -305,6 +317,20 @@ private fun CodeBlock(language: String, code: String) {
         ) {
             Text(language.ifEmpty { "code" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
+            // „🎨 Malen“ bei Bild-Prompts (Tag-Listen), wenn ComfyUI eingerichtet ist
+            val paint = LocalPaint.current
+            if (paint != null && looksLikeImagePrompt(language, code)) {
+                Text(
+                    "🎨 Malen",
+                    fontSize = 12.sp,
+                    color = Mint,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { paint(code) }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Row(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))

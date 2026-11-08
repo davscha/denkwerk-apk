@@ -574,7 +574,11 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
             streaming && text.isEmpty() && tools.none { it.running } -> TypingDots()
             streaming && text.isEmpty() -> {}
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
-            else -> MarkdownText(text)
+            else -> {
+                // Prompt-Blöcke bekommen einen „🎨 Malen“-Knopf, sobald ComfyUI eingerichtet ist
+                val paint: ((String) -> Unit)? = if (!streaming && vm.recipe.checkpoint.isNotBlank()) { p -> vm.paintFromPrompt(p) } else null
+                CompositionLocalProvider(LocalPaint provides paint) { MarkdownText(text) }
+            }
         }
         // Quellen, auf die sich die Antwort stützt – antippen öffnet die Seite
         if (sources.isNotEmpty()) SourcesRow(sources)

@@ -17,6 +17,9 @@ import de.davscha.denkwerk.data.Preset
 import de.davscha.denkwerk.data.DocAttachment
 import de.davscha.denkwerk.data.SavedPrompt
 import de.davscha.denkwerk.data.MemoryFact
+import de.davscha.denkwerk.data.ImageRecipe
+import de.davscha.denkwerk.data.LoraSetting
+import de.davscha.denkwerk.engine.ComfyClient
 import de.davscha.denkwerk.data.ToolEvent
 import de.davscha.denkwerk.engine.DownloadRequest
 import de.davscha.denkwerk.engine.ToolStreamEvent
@@ -67,14 +70,15 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
-    "tags_pruefen", "tags_suchen",
+    "tags_pruefen", "tags_suchen", "bild_malen",
     "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "bild_rueckwaertssuche", "anime_bild_quelle", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
+    "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, schreib einen Danbooru-Tag-Prompt und ruf bild_malen auf. " +
+            "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
         "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
         "Bei Videos wähle die passende Quelle: Dokus/Reportagen/TV-Sendungen → quelle=mediathek, alte Filme/Archivmaterial → archiv. " +
         "Für Videos nutze videos_suchen (erscheinen automatisch als Kärtchen); soll ein YouTube-Video zusammengefasst oder " +
@@ -330,7 +334,137 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         allowedDirs = { listOf(store.dataDir, context.filesDir, context.cacheDir) },
         sauceNaoKey = { settings.sauceNaoKey },
         videoFilter = { Triple(settings.videoShowYoutube, settings.videoShowSocial, settings.videoBlocked) },
+        paint = { prompt, format -> paintImage(prompt, format) },
+        paintReady = { recipe.checkpoint.isNotBlank() },
+        recipeInfo = { recipeDescription() },
     )
+
+    // ---------- Bilder malen (ComfyUI) ----------
+    var recipe by mutableStateOf(ImageRecipe())
+        private set
+    var comfyStatus by mutableStateOf("")
+        private set
+    var comfyBusy by mutableStateOf(false)
+        private set
+    /** Checkpoints, die in checkpoints/denkwerk/noobai/ liegen */
+    var comfyCheckpoints by mutableStateOf<List<String>>(emptyList())
+        private set
+    /** Fortschritt des laufenden Bildes in Sekunden (null = kein Bild in Arbeit) */
+    var paintSeconds by mutableStateOf<Int?>(null)
+        private set
+
+    fun updateRecipe(r: ImageRecipe) {
+        recipe = r
+        settings.imageRecipe = r
+    }
+
+    fun saveComfy(host: String, port: Int) {
+        settings.comfyHost = host
+        settings.comfyPort = port
+    }
+
+    /** Verbinden und Checkpoints/LoRAs aus den denkwerk-Ordnern laden; neue LoRAs bekommen Trigger aus den Metadaten */
+    fun refreshComfy() {
+        if (comfyBusy) return
+        comfyBusy = true
+        comfyStatus = "Verbinde …"
+        viewModelScope.launch {
+            try {
+                val c = ComfyClient(settings.comfyHost, settings.comfyPort)
+                val info = withContext(Dispatchers.IO) { c.test() }
+                val family = recipe.family
+                val ckpts = withContext(Dispatchers.IO) { c.checkpoints(family) }
+                val loraNames = withContext(Dispatchers.IO) { c.loras(family) }
+                comfyCheckpoints = ckpts
+                // Vorhandene Einstellungen behalten, neue LoRAs ergänzen, verschwundene entfernen
+                val old = recipe.loras.associateBy { it.name }
+                val merged = loraNames.map { n ->
+                    old[n] ?: LoraSetting(
+                        name = n,
+                        kind = ComfyClient.kindOf(n),
+                        trigger = withContext(Dispatchers.IO) { c.suggestTriggers(n) },
+                    )
+                }
+                val ckpt = recipe.checkpoint.takeIf { it in ckpts } ?: ckpts.firstOrNull().orEmpty()
+                updateRecipe(recipe.copy(checkpoint = ckpt, loras = merged))
+                comfyStatus = "Verbunden · $info · ${ckpts.size} Checkpoints · ${loraNames.size} LoRAs" +
+                    (if (ckpts.isEmpty()) " – lege Checkpoints in models/checkpoints/denkwerk/$family/" else "")
+            } catch (e: Throwable) {
+                comfyStatus = "Nicht erreichbar: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                comfyBusy = false
+            }
+        }
+    }
+
+    /** Für die Werkzeug-Beschreibung: welche LoRAs aktiv sind */
+    private fun recipeDescription(): String {
+        val r = recipe
+        val active = r.loras.filter { it.enabled }
+        return "Modell: ${ComfyClient.shortName(r.checkpoint)} (NoobAI)." +
+            (if (active.isNotEmpty()) " Aktive LoRAs: " + active.joinToString { "${ComfyClient.shortName(it.name)} (${if (it.kind == "char") "Figur" else "Stil"})" } + "." else "")
+    }
+
+    /**
+     * Malt ein Bild: Ollama-Modell vorher entladen (Grafikspeicher!), Prompt zusammensetzen
+     * (Qualitäts-Tags + LoRA-Trigger + Tags), Workflow schicken, Bild speichern. Gibt den Dateipfad zurück.
+     */
+    suspend fun paintImage(tags: String, format: String): String {
+        val r = recipe
+        if (r.checkpoint.isBlank()) throw java.io.IOException("Kein Checkpoint gewählt (Einstellungen → Bilder malen)")
+        withContext(Dispatchers.Main) { paintSeconds = 0 }
+        try {
+            // Grafikspeicher frei machen: Ollama-Modell entladen (lädt bei der nächsten Frage von selbst wieder)
+            if (settings.source == Source.OLLAMA && settings.ollamaModel.isNotBlank()) {
+                withContext(Dispatchers.IO) { runCatching { OllamaClient(settings.ollamaHost, settings.ollamaPort).unload(settings.ollamaModel) } }
+            }
+            val triggers = r.loras.filter { it.enabled && it.trigger.isNotBlank() }.joinToString(", ") { it.trigger }
+            val cleanTags = tags.replace(Regex("```\\w*"), "").replace(Regex("\\s*\\n\\s*"), ", ").trim().trim(',')
+            val positive = listOf(ComfyClient.NOOBAI_QUALITY, triggers, cleanTags).filter { it.isNotBlank() }.joinToString(", ")
+            val negative = (if (r.sfw) "nsfw, " else "") + ComfyClient.NOOBAI_NEGATIVE
+            val fmt = format.takeIf { it in setOf("quadrat", "hoch", "quer", "breit") } ?: r.format
+            val wf = ComfyClient.buildWorkflow(r, positive, negative, fmt, (Math.random() * 1e15).toLong())
+            val bytes = withContext(Dispatchers.IO) {
+                ComfyClient(settings.comfyHost, settings.comfyPort).run(wf) { s ->
+                    viewModelScope.launch(Dispatchers.Main) { paintSeconds = s }
+                }
+            }
+            return withContext(Dispatchers.IO) {
+                val dir = java.io.File(store.dataDir, "Bilder-KI").apply { mkdirs() }
+                val f = java.io.File(dir, "bild-${System.currentTimeMillis()}.png")
+                f.writeBytes(bytes)
+                f.absolutePath
+            }
+        } finally {
+            withContext(Dispatchers.Main) { paintSeconds = null }
+        }
+    }
+
+    /** „🎨 Malen“-Knopf an einem Prompt-Code-Block: malt direkt und hängt das Bild als neue Nachricht an */
+    fun paintFromPrompt(prompt: String) {
+        val chat = currentChat ?: return
+        if (paintSeconds != null) { toast = "Es wird gerade schon ein Bild gemalt."; return }
+        if (recipe.checkpoint.isBlank()) { toast = "Erst ComfyUI einrichten: Einstellungen → Bilder malen"; openSettings(); return }
+        val short = prompt.replace(Regex("\\s+"), " ").take(60)
+        val msg = ChatMessage(
+            fromUser = false,
+            text = "",
+            modelLabel = "ComfyUI · " + ComfyClient.shortName(recipe.checkpoint),
+            toolEvents = listOf(ToolEvent("bild_malen", short, "läuft …", running = true)),
+        )
+        upsert(chat.copy(messages = chat.messages + msg))
+        viewModelScope.launch {
+            val start = System.currentTimeMillis()
+            val result = runCatching { paintImage(prompt, recipe.format) }
+            val secs = (System.currentTimeMillis() - start) / 1000
+            val c = chats.firstOrNull { it.id == chat.id } ?: return@launch
+            val done = result.fold(
+                { path -> msg.copy(toolEvents = listOf(ToolEvent("bild_malen", short, "fertig · $secs s")), imagePaths = listOf(path)) },
+                { e -> msg.copy(toolEvents = listOf(ToolEvent("bild_malen", short, "Fehler: ${e.message}", ok = false))) },
+            )
+            upsert(c.copy(messages = c.messages.map { if (it.id == msg.id) done else it }))
+        }
+    }
 
     /** Alle Bilder im offenen Chat, neueste zuerst: angehängte, heruntergeladene und gefundene */
     private fun imagesInCurrentChat(): List<String> =
@@ -411,6 +545,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val speaker = Speaker(app) { id -> viewModelScope.launch(Dispatchers.Main) { speakingId = id } }
 
     init {
+        recipe = settings.imageRecipe
         // Danbooru-Tag-Liste im Hintergrund laden (für Prompt-Schmied und Vorschläge beim Tippen)
         viewModelScope.launch(Dispatchers.IO) { de.davscha.denkwerk.data.TagLibrary.load(context) }
         toolsEnabledState = settings.toolsEnabled
@@ -914,6 +1049,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
         "tags_suchen" -> args.optString("stichwort")
         "tags_pruefen" -> ""
+        "bild_malen" -> args.optString("prompt").take(60)
 
         "bild_rueckwaertssuche", "anime_bild_quelle" -> args.optString("bild").let { b ->
             when {

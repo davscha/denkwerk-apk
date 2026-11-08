@@ -39,4 +39,4 @@
 - [ ] Export als PDF, Backup/Wiederherstellen als JSON
 - [ ] Oberfläche in Deutsch, Englisch, Spanisch, Französisch
 - [ ] OpenAI-kompatible Server (LM Studio, llama.cpp)
-- [ ] Bilder generieren über ComfyUI auf dem PC
+- [x] Bilder malen über ComfyUI (NoobAI, Ordner denkwerk/noobai, Char- und Style-LoRAs)

@@ -43,6 +43,12 @@ class Toolbox(
     private val allowedDirs: () -> List<File> = { emptyList() },
     /** SauceNAO-Schlüssel, leer = Werkzeug nicht anbieten */
     private val sauceNaoKey: () -> String = { "" },
+    /** Bild malen über ComfyUI: (Prompt, Format) → Dateipfad; null = ComfyUI nicht eingerichtet */
+    private val paint: suspend (String, String) -> String = { _, _ -> throw IOException("ComfyUI ist nicht eingerichtet") },
+    /** true = ComfyUI eingerichtet (Checkpoint gewählt) – nur dann wird bild_malen angeboten */
+    private val paintReady: () -> Boolean = { false },
+    /** Kurzbeschreibung des Bildrezepts für die Werkzeug-Beschreibung (Checkpoint, LoRAs, Trigger) */
+    private val recipeInfo: () -> String = { "" },
     /** Videosuche-Filter: YouTube zeigen, soziale Medien zeigen, eigene Sperrliste */
     private val videoFilter: () -> Triple<Boolean, Boolean, String> = { Triple(true, true, "") },
 ) {
@@ -106,6 +112,21 @@ class Toolbox(
                     "Findet die Quelle von Anime-/Manga-Bildern und Illustrationen (Künstler, Pixiv, Danbooru, Werk, Figuren) über SauceNAO. " +
                         "Ohne Angabe wird das zuletzt im Chat gezeigte oder angehängte Bild benutzt.",
                     props("bild" to "Optional: Web-Adresse oder Dateipfad; leer = letztes Bild im Chat"),
+                )
+            )
+        }
+        if (paintReady()) {
+            put(
+                spec(
+                    "bild_malen",
+                    "Malt ein Bild mit ComfyUI auf dem PC des Nutzers (Anime-/Illustrationsmodell). Der Prompt ist eine Kommaliste im " +
+                        "Danbooru-Tag-Stil auf Englisch (z. B. \"1girl, solo, long hair, red kimono, cherry blossoms, night\"). " +
+                        "Qualitäts-Tags und LoRA-Trigger setzt Denkwerk selbst davor. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
+                    JSONObject()
+                        .put("prompt", JSONObject().put("type", "string").put("description", "Danbooru-Tags, durch Kommas getrennt"))
+                        .put("format", JSONObject().put("type", "string").put("enum", JSONArray(listOf("quadrat", "hoch", "quer", "breit")))
+                            .put("description", "Bildformat (Standard aus den Einstellungen)")),
+                    required = listOf("prompt"),
                 )
             )
         }
@@ -243,6 +264,12 @@ class Toolbox(
         "video_verstehen" -> videoTranscript(args.optString("url"))
         "bild_rueckwaertssuche" -> reverseSearch(args.optString("bild"))
         "tags_pruefen" -> checkTags(args.optString("tags"))
+        "bild_malen" -> {
+            val start = System.currentTimeMillis()
+            val path = paint(args.optString("prompt"), args.optString("format"))
+            val secs = (System.currentTimeMillis() - start) / 1000
+            ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s", images = listOf(path))
+        }
         "tags_suchen" -> findTags(args.optString("stichwort"))
         "anime_bild_quelle" -> sauceNao(args.optString("bild"))
         "auf_seite_suchen" -> siteSearch(
@@ -1369,6 +1396,7 @@ class Toolbox(
             "video_verstehen" -> "📺" to "Video angeschaut"
             "bild_rueckwaertssuche" -> "🔁" to "Rückwärtssuche"
             "tags_pruefen" -> "🏷️" to "Tags geprüft"
+            "bild_malen" -> "🎨" to "Bild malen"
             "tags_suchen" -> "🏷️" to "Tag-Suche"
             "anime_bild_quelle" -> "🎨" to "SauceNAO"
             "herunterladen" -> "⬇️" to "Herunterladen"

@@ -81,6 +81,20 @@ class Settings(context: Context) {
         get() = prefs.getInt("webMode", 1)
         set(v) = prefs.edit().putInt("webMode", v.coerceIn(0, 2)).apply()
 
+    /** ComfyUI auf dem PC (Bilder malen) */
+    var comfyHost: String
+        get() = prefs.getString("comfyHost", "192.168.178.41") ?: ""
+        set(v) = prefs.edit().putString("comfyHost", v.trim()).apply()
+
+    var comfyPort: Int
+        get() = prefs.getInt("comfyPort", 8080)
+        set(v) = prefs.edit().putInt("comfyPort", v).apply()
+
+    /** Bildrezept als JSON (Checkpoint, LoRAs, Sampler) */
+    var imageRecipe: ImageRecipe
+        get() = ImageRecipe.fromJson(prefs.getString("imageRecipe", "") ?: "")
+        set(v) = prefs.edit().putString("imageRecipe", v.toJson().toString()).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

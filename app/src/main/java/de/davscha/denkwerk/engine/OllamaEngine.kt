@@ -57,6 +57,11 @@ class OllamaClient(host: String, port: Int) {
         return JSONObject(post("/api/generate", body, timeoutMs = 60_000)).optString("response").trim()
     }
 
+    /** Modell sofort aus dem Grafikspeicher werfen (z. B. damit ComfyUI Platz hat). */
+    fun unload(model: String) {
+        post("/api/generate", JSONObject().put("model", model).put("keep_alive", 0), timeoutMs = 20_000)
+    }
+
     /** Modell in den Grafikspeicher laden, damit die erste Antwort schnell kommt. */
     fun warmUp(model: String) {
         post("/api/generate", JSONObject().put("model", model).put("prompt", "").put("keep_alive", "30m"), timeoutMs = 180_000)
