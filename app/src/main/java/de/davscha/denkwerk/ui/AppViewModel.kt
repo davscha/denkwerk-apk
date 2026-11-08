@@ -98,6 +98,8 @@ private const val TOOL_HINT =
         "Erfinde keine Namen, Zitate, Zahlen oder Zusammenhänge; steht etwas nicht in den Quellen, sag das offen. " +
         "Bei politischen oder umstrittenen Themen bleib sachlich und neutral: gib wieder, was berichtet wird und von wem, " +
         "übernimm keine Wertungen ungeprüft (auch nicht die des Nutzers) und nenne verschiedene Sichtweisen, wenn die Quellen sie hergeben. " +
+        "Antworte immer in der Sprache der letzten Nachricht des Nutzers (fragt er auf Englisch, antworte auf Englisch). " +
+        "Prüfe vor dem Absenden, ob sich deine Aussagen widersprechen (z. B. Ergebnis, Halbzeitstand, Wettbewerb). " +
         "Rufe Werkzeuge immer über die Werkzeug-Schnittstelle auf und schreibe niemals JSON wie {\"action\": …} in deine Antwort. " +
         "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
         "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
@@ -271,7 +273,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Aufgaben, die keine Fakten brauchen
         if (Regex("^(schreib|formulier|übersetz|korrigier|verbesser|mach (mir )?(einen|eine) (prompt|gedicht|text))").containsMatchIn(t)) return false
         return t.contains('?') ||
-            Regex("^(wer|was|wann|wo|wie|warum|wieso|weshalb|welche[rsmn]?|gibt es|ist|sind|kann|hat|haben|stimmt|erklär|kennst du|weißt du|such)\\b").containsMatchIn(t)
+            Regex("^(wer|was|wann|wo|wie|warum|wieso|weshalb|welche[rsmn]?|gibt es|ist|sind|kann|hat|haben|stimmt|erklär|kennst du|weißt du|such" +
+                "|who|what|when|where|why|how|which|is|are|was|were|did|does|do|can|has|have|tell me|search|find)\\b").containsMatchIn(t)
     }
 
     /** Suchanfrage aus der Nachricht machen: Höflichkeitsfloskeln und „such im Internet“ weg */
