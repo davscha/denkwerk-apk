@@ -652,19 +652,30 @@ class Toolbox(
         val seconds = details?.optString("lengthSeconds")?.toIntOrNull() ?: 0
         val description = details?.optString("shortDescription").orEmpty()
 
-        val tracks = player.optJSONObject("captions")?.optJSONObject("playerCaptionsTracklistRenderer")?.optJSONArray("captionTracks")
-        val all = if (tracks == null) emptyList() else List(tracks.length()) { tracks.getJSONObject(it) }
-        fun pick(lang: String, auto: Boolean) = all.firstOrNull { it.optString("languageCode").startsWith(lang) && (it.optString("kind") == "asr") == auto }
-        val track = pick("de", false) ?: pick("de", true) ?: pick("en", false) ?: pick("en", true) ?: all.firstOrNull()
+        fun tracksOf(p: JSONObject?): List<JSONObject> {
+            val t = p?.optJSONObject("captions")?.optJSONObject("playerCaptionsTracklistRenderer")?.optJSONArray("captionTracks")
+            return if (t == null) emptyList() else List(t.length()) { t.getJSONObject(it) }
+        }
+        fun pickTrack(all: List<JSONObject>): JSONObject? {
+            fun pick(lang: String, auto: Boolean) = all.firstOrNull { it.optString("languageCode").startsWith(lang) && (it.optString("kind") == "asr") == auto }
+            return pick("de", false) ?: pick("de", true) ?: pick("en", false) ?: pick("en", true) ?: all.firstOrNull()
+        }
+
+        // 1. Weg der YouTube-App (InnerTube, Android-Client) – deren Untertitel-Adressen funktionieren ohne Browser-Schutz
+        //    2. Rückfall: die Untertitel-Adressen aus der Webseite
+        val apiKey = Regex("\"INNERTUBE_API_KEY\"\\s*:\\s*\"([A-Za-z0-9_-]+)\"").find(html)?.groupValues?.get(1)
+        val appPlayer = if (apiKey != null) runCatching { innertubePlayer(id, apiKey) }.getOrNull() else null
+        val candidates = listOfNotNull(pickTrack(tracksOf(appPlayer)), pickTrack(tracksOf(player)))
 
         var transcript = ""
-        if (track != null) {
-            transcript = runCatching {
-                val xml = httpGet(track.optString("baseUrl"), referer = "https://www.youtube.com/")
-                Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser()).select("text")
-                    .joinToString(" ") { org.jsoup.parser.Parser.unescapeEntities(it.text(), false) }
-                    .replace(Regex("\\s+"), " ").trim()
-            }.getOrDefault("")
+        var track: JSONObject? = null
+        for (c in candidates) {
+            val text = runCatching { fetchCaptions(c.optString("baseUrl")) }.getOrDefault("")
+            if (text.isNotBlank()) {
+                transcript = text
+                track = c
+                break
+            }
         }
         val budget = pageBudget()
         val cut = transcript.length > budget
@@ -689,6 +700,39 @@ class Toolbox(
         )
         val summary = if (transcript.isNotBlank()) "Untertitel gelesen" + (if (cut) " · gekürzt" else "") else "keine Untertitel – nur Beschreibung"
         return ToolOutput(forModel, summary, ok = true, webVideos = listOf(video))
+    }
+
+    /** Abfrage wie die YouTube-App für Android (liefert Untertitel-Adressen, die ohne Browser-Token gehen). */
+    private fun innertubePlayer(videoId: String, apiKey: String): JSONObject {
+        val body = JSONObject()
+            .put("context", JSONObject().put("client", JSONObject()
+                .put("clientName", "ANDROID").put("clientVersion", "20.10.38").put("hl", "de").put("gl", "DE")))
+            .put("videoId", videoId)
+        val conn = URL("https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false").openConnection() as HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 20_000
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("User-Agent", "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip")
+        try {
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            if (conn.responseCode !in 200..299) throw IOException("InnerTube ${conn.responseCode}")
+            return JSONObject(conn.inputStream.bufferedReader().readText())
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Untertitel-Datei laden und in reinen Text verwandeln (älteres <text>- und neueres <p>-Format). */
+    private fun fetchCaptions(baseUrl: String): String {
+        if (baseUrl.isBlank()) return ""
+        val url = baseUrl.replace("&fmt=srv3", "")
+        val xml = httpGet(url, referer = "https://www.youtube.com/")
+        val doc = Jsoup.parse(xml, "", org.jsoup.parser.Parser.xmlParser())
+        val parts = doc.select("text").ifEmpty { doc.select("p") }
+        return parts.joinToString(" ") { org.jsoup.parser.Parser.unescapeEntities(it.text(), false) }
+            .replace(Regex("\\s+"), " ").trim()
     }
 
     private fun youtubeId(url: String): String? =
