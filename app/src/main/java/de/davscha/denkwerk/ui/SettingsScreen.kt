@@ -418,6 +418,27 @@ private fun ToolsSection(vm: AppViewModel) {
             }
             Switch(checked = vm.toolsEnabledState, onCheckedChange = { vm.setToolsEnabled(it) })
         }
+        // Websuche vor der Antwort (funktioniert mit jedem Modell, auch Gemma auf dem Gerät)
+        Text("Websuche vor der Antwort", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
+        Text(
+            "Denkwerk sucht selbst, bevor das Modell antwortet – kleine Modelle raten sonst gern aus dem Gedächtnis.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("Modell entscheidet", "Bei Fragen", "Immer").forEachIndexed { i, label ->
+                val selected = vm.webModeState == i
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) Mint else MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { vm.setWebMode(i) }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                ) {
+                    Text(label, fontSize = 13.sp, color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                }
+            }
+        }
         val ready = vm.engineStatus as? EngineStatus.Ready
         Text(
             when {

@@ -76,6 +76,11 @@ class Settings(context: Context) {
         get() = prefs.getString("videoBlocked", "") ?: ""
         set(v) = prefs.edit().putString("videoBlocked", v).apply()
 
+    /** Websuche vor der Antwort: 0 = Modell entscheidet, 1 = bei Fragen (Standard), 2 = immer */
+    var webMode: Int
+        get() = prefs.getInt("webMode", 1)
+        set(v) = prefs.edit().putInt("webMode", v.coerceIn(0, 2)).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

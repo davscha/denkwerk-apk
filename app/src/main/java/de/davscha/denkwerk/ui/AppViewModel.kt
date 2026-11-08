@@ -249,6 +249,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------- Websuche vor der Antwort ----------
+    var webModeState by mutableStateOf(1)
+        private set
+
+    fun setWebMode(mode: Int) {
+        settings.webMode = mode
+        webModeState = mode
+    }
+
+    /** 🌐-Knopf im Eingabefeld: nächste Nachrichten in diesem Chat immer mit Websuche */
+    var forceWeb by mutableStateOf(false)
+
+    /** Sieht die Nachricht wie eine Wissensfrage aus? (Danke, Smalltalk usw. nicht) */
+    private fun looksLikeQuestion(text: String): Boolean {
+        val t = text.trim().lowercase()
+        if (t.length < 8) return false
+        if (Regex("^(danke|ok|okay|super|cool|gut|na gut|alles klar|prima|ja|nein|hallo|hi|tschüss)\\b").containsMatchIn(t) && t.length < 30) return false
+        // Aufgaben, die keine Fakten brauchen
+        if (Regex("^(schreib|formulier|übersetz|korrigier|verbesser|mach (mir )?(einen|eine) (prompt|gedicht|text))").containsMatchIn(t)) return false
+        return t.contains('?') ||
+            Regex("^(wer|was|wann|wo|wie|warum|wieso|weshalb|welche[rsmn]?|gibt es|ist|sind|kann|hat|haben|stimmt|erklär|kennst du|weißt du|such)\\b").containsMatchIn(t)
+    }
+
+    /** Suchanfrage aus der Nachricht machen: Höflichkeitsfloskeln und „such im Internet“ weg */
+    private fun searchQueryFrom(text: String): String =
+        text.replace(Regex("(?i)\\b(bitte|kannst du( mir)?|könntest du|sag mir|erzähl mir|such(e)?( mal)?( mir)?( im (internet|web|netz))?( nach)?|schau( mal)?( im (internet|web|netz))?( nach)?)\\b"), " ")
+            .replace(Regex("[?!.]+$"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(150)
+
+    private fun shouldPreSearch(m: ChatMessage): Boolean {
+        if (m.text.isBlank() || (m.documents.isNotEmpty() && m.text.length < 40)) return false
+        return forceWeb || webModeState == 2 || (webModeState == 1 && looksLikeQuestion(m.text))
+    }
+
     /** Wartende Rückfrage „Dateien speichern?“ */
     class DownloadConfirm(val request: DownloadRequest, val answer: CompletableDeferred<Boolean>)
     var downloadConfirm by mutableStateOf<DownloadConfirm?>(null)
@@ -374,6 +410,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { de.davscha.denkwerk.data.TagLibrary.load(context) }
         toolsEnabledState = settings.toolsEnabled
         memoryEnabledState = settings.memoryEnabled
+        webModeState = settings.webMode
         refreshStorage()
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
@@ -421,6 +458,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newChat(presetId: String? = null) {
         if (generating) stop()
+        forceWeb = false
         currentChatId = null
         pendingPresetId = presetId
         screen = Screen.Chat
@@ -688,7 +726,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 engineSyncKey = null // stimmt erst wieder, wenn die Antwort vollständig ist
-                val prompt = withContext(Dispatchers.IO) { fullPrompt(userMsg) }
+                var prompt = withContext(Dispatchers.IO) { fullPrompt(userMsg) }
+
+                // Websuche VOR der Antwort – kleine Modelle überschätzen sonst ihr Wissen und suchen nicht von selbst
+                if (shouldPreSearch(userMsg)) {
+                    val query = searchQueryFrom(userMsg.text)
+                    streamingTools = streamingTools + ToolEvent("web_suche", query, "läuft …", running = true)
+                    // Auf dem Gerät (kleiner Kontext) nur einen Artikel lesen
+                    val readTop = if (eng is OllamaEngine) 3 else 1
+                    val out = withContext(Dispatchers.IO) {
+                        runCatching { toolbox.run("web_suche", org.json.JSONObject().put("anfrage", query).put("treffer_lesen", readTop)) }
+                    }
+                    val res = out.getOrNull()
+                    streamingTools = streamingTools.map {
+                        if (it.running && it.name == "web_suche") it.copy(running = false, summary = res?.summary ?: "Fehler: ${out.exceptionOrNull()?.message}", ok = res?.ok ?: false) else it
+                    }
+                    if (res != null && res.ok) {
+                        streamingSources = streamingSources + res.sources
+                        val budget = if (eng is OllamaEngine) (settings.ollamaContext * 2).coerceAtLeast(6000) else 3500
+                        prompt = "Aktuelle Websuche zu meiner Frage (stütze dich darauf, nenne Belege mit [Nummer], " +
+                            "und sag ehrlich, wenn die Ergebnisse die Frage nicht beantworten):\n\n" +
+                            res.forModel.take(budget) + "\n\n---\nMeine Frage: " + prompt
+                    }
+                }
                 val start = System.currentTimeMillis()
                 var firstChunkAt = 0L
                 var chunks = 0

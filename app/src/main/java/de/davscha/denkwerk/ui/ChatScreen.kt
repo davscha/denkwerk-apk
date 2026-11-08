@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Close
@@ -942,6 +943,17 @@ private fun InputBar(
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
+                // 🌐 – Websuche für diesen Chat erzwingen
+                IconButton(onClick = {
+                    vm.forceWeb = !vm.forceWeb
+                    vm.toast = if (vm.forceWeb) "🌐 Websuche an – jede Nachricht wird vorher im Netz recherchiert" else "🌐 Websuche wieder nach Einstellung"
+                }, enabled = !editing, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        Icons.Default.Public,
+                        "Websuche erzwingen",
+                        tint = if (vm.forceWeb) Mint else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 // "+" – Bild oder Dokument anhängen
                 Box {
                     IconButton(onClick = { attachMenu = true }, enabled = !editing) { Icon(Icons.Default.Add, "Anhängen") }
