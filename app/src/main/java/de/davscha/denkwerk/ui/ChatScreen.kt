@@ -556,7 +556,11 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
                 tools.forEach { t ->
                     // Rückwärtssuche gescheitert? Antippen gibt das Bild an Google Lens weiter
                     val lens = if (t.name == "bild_rueckwaertssuche" && !t.ok && !t.running) vm.lastChatImage() else null
-                    ToolCard(t, onClick = lens?.let { img -> { openInLens(context, img) } })
+                    ToolCard(
+                        t,
+                        onClick = lens?.let { img -> { openInLens(context, img) } },
+                        paintSeconds = if (t.name == "bild_malen" && t.running) vm.paintSeconds else null,
+                    )
                 }
             }
         }
@@ -570,8 +574,10 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
         if (webImages.isNotEmpty()) {
             Box(Modifier.padding(bottom = 10.dp)) { ImageStrip(webImages, onOpen = { i -> openGallery(webImages, i) }) }
         }
+        // Denk-Modell: Gedanken klein und einklappbar zeigen, damit man sieht, dass etwas passiert
+        if (streaming && vm.streamingThinking.isNotBlank()) ThinkingBox(vm.streamingThinking, done = text.isNotEmpty())
         when {
-            streaming && text.isEmpty() && tools.none { it.running } -> TypingDots()
+            streaming && text.isEmpty() && tools.none { it.running } && vm.streamingThinking.isBlank() -> TypingDots()
             streaming && text.isEmpty() -> {}
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
             else -> {
@@ -677,7 +683,7 @@ private fun SourcesRow(sources: List<de.davscha.denkwerk.data.SourceLink>) {
 
 /** Kärtchen für einen Werkzeug-Aufruf, z. B. „🔍 Websuche · „wetter potsdam“ · 6 Treffer“ */
 @Composable
-private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null) {
+private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null, paintSeconds: Int? = null) {
     val (icon, label) = Toolbox.label(t.name)
     Column {
     Row(
@@ -698,6 +704,7 @@ private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null) {
         Spacer(Modifier.width(6.dp))
         if (t.running) {
             CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(12.dp), color = Mint)
+            paintSeconds?.let { s -> Text(" $s s", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             Text(
                 t.summary,
@@ -728,6 +735,38 @@ private fun ToolCard(t: ToolEvent, onClick: (() -> Unit)? = null) {
             modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { onClick() }.padding(horizontal = 10.dp, vertical = 4.dp),
         )
     }
+    }
+}
+
+/** „💭 Denkt nach …“ – einklappbar, zeigt die letzten Gedanken des Modells */
+@Composable
+private fun ThinkingBox(thoughts: String, done: Boolean) {
+    var open by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+            .clickable { open = !open }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!done) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(12.dp), color = Mint)
+            Spacer(Modifier.width(6.dp))
+            Text(
+                (if (done) "💭 Nachgedacht" else "💭 Denkt nach …") + "  ${thoughts.length} Zeichen" + (if (open) "  ▲" else "  ▼"),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(
+            if (open) thoughts else thoughts.takeLast(160).replace('\n', ' '),
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+            maxLines = if (open) 40 else 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

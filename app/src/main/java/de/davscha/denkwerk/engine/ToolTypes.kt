@@ -26,4 +26,6 @@ sealed interface ToolStreamEvent {
     data class ToolDone(val name: String, val output: ToolOutput) : ToolStreamEvent
     /** Ein als Text geschriebener Werkzeug-Aufruf soll aus der sichtbaren Antwort verschwinden */
     data class RemoveText(val text: String) : ToolStreamEvent
+    /** Gedanken des Modells (Thinking-Modelle wie qwen3) – werden klein und einklappbar gezeigt */
+    data class Thinking(val text: String) : ToolStreamEvent
 }

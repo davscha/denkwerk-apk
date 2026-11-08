@@ -424,6 +424,13 @@ private fun ToolsSection(vm: AppViewModel) {
             }
             Switch(checked = vm.toolsEnabledState, onCheckedChange = { vm.setToolsEnabled(it) })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Nachdenken (Denk-Modelle wie qwen3)", fontSize = 14.sp)
+                Text("An = gründlicher, die Gedanken erscheinen klein über der Antwort · Aus = deutlich schneller", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = vm.thinkingState, onCheckedChange = { vm.setThinking(it) })
+        }
         // Websuche vor der Antwort (funktioniert mit jedem Modell, auch Gemma auf dem Gerät)
         Text("Websuche vor der Antwort", fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
         Text(

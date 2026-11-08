@@ -95,6 +95,11 @@ class Settings(context: Context) {
         get() = ImageRecipe.fromJson(prefs.getString("imageRecipe", "") ?: "")
         set(v) = prefs.edit().putString("imageRecipe", v.toJson().toString()).apply()
 
+    /** Denk-Modelle (qwen3 …): nachdenken lassen (gründlicher) oder nicht (schneller) */
+    var thinking: Boolean
+        get() = prefs.getBoolean("thinking", true)
+        set(v) = prefs.edit().putBoolean("thinking", v).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()

@@ -121,6 +121,16 @@ class OllamaEngine(
     override var supportsImages = false
         private set
 
+    /** true = Denk-Modell (qwen3, deepseek-r1 …) */
+    var supportsThinking = false
+        private set
+
+    /** Nachdenken an/aus (nur bei Denk-Modellen); aus = schneller */
+    var thinkingEnabled: () -> Boolean = { true }
+
+    /** Bekommt die Gedanken des Modells Stück für Stück (für die Anzeige „denkt nach …“) */
+    @Volatile var onThinking: ((String) -> Unit)? = null
+
     /** true = das Modell kann Werkzeuge aufrufen (Websuche, Seite lesen …) */
     var supportsTools = false
         private set
@@ -133,6 +143,7 @@ class OllamaEngine(
         val caps = runCatching { c.capabilities(modelPath) }.getOrDefault(emptySet())
         supportsImages = "vision" in caps
         supportsTools = "tools" in caps
+        supportsThinking = "thinking" in caps
         c.warmUp(modelPath)
         client = c
         model = modelPath
@@ -235,6 +246,15 @@ class OllamaEngine(
                 if (stopped) break
             }
             if (stopped) break
+            // Nur gemalt und alles gut? Dann fertig – das Modell wurde fürs Malen entladen,
+            // eine weitere Runde hieße es erst wieder zu laden
+            val names = (0 until calls.length()).mapNotNull { calls.optJSONObject(it)?.optJSONObject("function")?.optString("name") }
+            if (names.isNotEmpty() && names.all { it == "bild_malen" } && turn.last().optString("content").startsWith("Das Bild wurde gemalt")) {
+                val done = "Hier ist dein Bild. 🎨"
+                emit(ToolStreamEvent.Text(done))
+                turn += JSONObject().put("role", "assistant").put("content", done)
+                break
+            }
         }
         // Verlauf: das Bild nur als Hinweis, Werkzeug-Runden komplett (damit Rückfragen funktionieren)
         rememberTurn(text, imagePaths)
@@ -291,6 +311,8 @@ class OllamaEngine(
                     .put("repeat_last_n", 256),
             )
         if (tools != null && tools.length() > 0) body.put("tools", tools)
+        // Denk-Modelle: Gedanken getrennt liefern lassen (oder ganz aus, wenn abgeschaltet)
+        if (supportsThinking) body.put("think", thinkingEnabled())
 
         val conn = c.open("/api/chat", timeoutMs = 180_000)
         activeConnection = conn
@@ -314,6 +336,7 @@ class OllamaEngine(
                 val o = JSONObject(line)
                 o.optString("error").takeIf { it.isNotEmpty() }?.let { throw IOException(it) }
                 val msg = o.optJSONObject("message")
+                msg?.optString("thinking")?.takeIf { it.isNotEmpty() }?.let { onThinking?.invoke(it) }
                 val chunk = msg?.optString("content").orEmpty()
                 if (chunk.isNotEmpty()) {
                     reply.append(chunk)

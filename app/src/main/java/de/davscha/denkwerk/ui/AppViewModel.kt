@@ -248,6 +248,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var streamingSources by mutableStateOf<List<de.davscha.denkwerk.data.SourceLink>>(emptyList())
         private set
+    /** Gedanken des Denk-Modells während der Antwort */
+    var streamingThinking by mutableStateOf("")
+        private set
+    var thinkingState by mutableStateOf(true)
+        private set
+
+    fun setThinking(on: Boolean) {
+        settings.thinking = on
+        thinkingState = on
+    }
 
     /** Bild aus der Slideshow speichern (du hast selbst getippt – keine Rückfrage) */
     fun saveWebImage(url: String) {
@@ -548,6 +558,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         recipe = settings.imageRecipe
         // Danbooru-Tag-Liste im Hintergrund laden (für Prompt-Schmied und Vorschläge beim Tippen)
         viewModelScope.launch(Dispatchers.IO) { de.davscha.denkwerk.data.TagLibrary.load(context) }
+        thinkingState = settings.thinking
         toolsEnabledState = settings.toolsEnabled
         memoryEnabledState = settings.memoryEnabled
         webModeState = settings.webMode
@@ -845,6 +856,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         streamingWebImages = emptyList()
         streamingWebVideos = emptyList()
         streamingSources = emptyList()
+        streamingThinking = ""
+        (eng as? OllamaEngine)?.let { oe ->
+            oe.thinkingEnabled = { thinkingState }
+            oe.onThinking = { piece -> viewModelScope.launch(Dispatchers.Main) { streamingThinking = (streamingThinking + piece).takeLast(4000) } }
+        }
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
         stopRequested = false
@@ -985,6 +1001,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 streamingWebImages = emptyList()
                 streamingWebVideos = emptyList()
                 streamingSources = emptyList()
+                streamingThinking = ""
                 answerDownload(false)
                 generating = false
                 generateJob = null
