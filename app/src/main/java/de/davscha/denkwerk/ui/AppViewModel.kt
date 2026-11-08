@@ -86,6 +86,10 @@ private const val TOOL_HINT =
         "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
         "also keine Linkliste dazu schreiben. " +
         "Mit merken speicherst du dauerhafte Fakten über den Nutzer (wenn er \"merk dir\" sagt oder Wichtiges über sich erzählt), mit vergessen löschst du sie. " +
+        "WICHTIG bei Fakten und Nachrichten: Stütze dich nur auf das, was in den Werkzeug-Ergebnissen steht, und nenne die Quellen. " +
+        "Erfinde keine Namen, Zitate, Zahlen oder Zusammenhänge; steht etwas nicht in den Quellen, sag das offen. " +
+        "Bei politischen oder umstrittenen Themen bleib sachlich und neutral: gib wieder, was berichtet wird und von wem, " +
+        "übernimm keine Wertungen ungeprüft (auch nicht die des Nutzers) und nenne verschiedene Sichtweisen, wenn die Quellen sie hergeben. " +
         "Rufe Werkzeuge immer über die Werkzeug-Schnittstelle auf und schreibe niemals JSON wie {\"action\": …} in deine Antwort. " +
         "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
         "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
@@ -227,6 +231,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var streamingWebImages by mutableStateOf<List<de.davscha.denkwerk.data.WebImage>>(emptyList())
         private set
     var streamingWebVideos by mutableStateOf<List<de.davscha.denkwerk.data.WebVideo>>(emptyList())
+        private set
+    var streamingSources by mutableStateOf<List<de.davscha.denkwerk.data.SourceLink>>(emptyList())
         private set
 
     /** Bild aus der Slideshow speichern (du hast selbst getippt – keine Rückfrage) */
@@ -644,6 +650,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         streamingTools = emptyList()
         streamingWebImages = emptyList()
         streamingWebVideos = emptyList()
+        streamingSources = emptyList()
         chats.firstOrNull { it.id == chatId }?.let { upsert(it.copy(messages = it.messages + reply), save = false) }
         generating = true
         stopRequested = false
@@ -702,6 +709,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 toolImages += ev.output.images
                                 streamingWebImages = streamingWebImages + ev.output.webImages
                                 streamingWebVideos = streamingWebVideos + ev.output.webVideos
+                                streamingSources = streamingSources + ev.output.sources
                             }
                         }
                     }
@@ -738,6 +746,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     imagePaths = toolImages.toList(),
                     webImages = streamingWebImages.distinctBy { it.url },
                     webVideos = streamingWebVideos.distinctBy { it.url },
+                    sources = streamingSources.distinctBy { it.url },
                 )
                 if (previousVariants.isNotEmpty()) {
                     val all = previousVariants + done.asVariant()
@@ -751,6 +760,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 streamingTools = emptyList()
                 streamingWebImages = emptyList()
                 streamingWebVideos = emptyList()
+                streamingSources = emptyList()
                 answerDownload(false)
                 generating = false
                 generateJob = null

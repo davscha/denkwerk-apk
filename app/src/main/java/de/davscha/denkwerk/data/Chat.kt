@@ -35,6 +35,15 @@ data class WebImage(
     }
 }
 
+/** Eine Quelle, auf die sich die Antwort stützt (als Kärtchen unter der Antwort) */
+data class SourceLink(val title: String, val url: String) {
+    fun toJson(): JSONObject = JSONObject().put("title", title).put("url", url)
+
+    companion object {
+        fun fromJson(o: JSONObject) = SourceLink(o.optString("title"), o.optString("url"))
+    }
+}
+
 /** Ein gefundenes Video (Videosuche) */
 data class WebVideo(
     val url: String,
@@ -94,6 +103,8 @@ data class ChatMessage(
     val imagePaths: List<String> = emptyList(),
     /** Bilder aus dem Web, die die KI gefunden hat (Galerie über der Antwort) */
     val webImages: List<WebImage> = emptyList(),
+    /** Gelesene Webseiten, auf die sich die Antwort stützt */
+    val sources: List<SourceLink> = emptyList(),
     /** Gefundene Videos (Video-Kärtchen über der Antwort) */
     val webVideos: List<WebVideo> = emptyList(),
     /** Werkzeuge, die die KI für diese Antwort benutzt hat */
@@ -129,6 +140,7 @@ data class ChatMessage(
         .put("toolEvents", JSONArray(toolEvents.map { it.toJson() }))
         .put("webImages", JSONArray(webImages.map { it.toJson() }))
         .put("webVideos", JSONArray(webVideos.map { it.toJson() }))
+        .put("sources", JSONArray(sources.map { it.toJson() }))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -144,6 +156,7 @@ data class ChatMessage(
             imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
                 // ältere Chats hatten nur ein Bild
                 ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
+            sources = o.optJSONArray("sources")?.let { a -> List(a.length()) { SourceLink.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             webVideos = o.optJSONArray("webVideos")?.let { a -> List(a.length()) { WebVideo.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             webImages = o.optJSONArray("webImages")?.let { a -> List(a.length()) { WebImage.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             toolEvents = o.optJSONArray("toolEvents")?.let { a -> List(a.length()) { ToolEvent.fromJson(a.getJSONObject(it)) } }.orEmpty(),

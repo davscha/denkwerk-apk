@@ -547,6 +547,7 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
     val tools = if (streaming) vm.streamingTools else m.toolEvents
     val webImages = if (streaming) vm.streamingWebImages else m.webImages
     val webVideos = if (streaming) vm.streamingWebVideos else m.webVideos
+    val sources = if (streaming) emptyList() else m.sources
     val openGallery = LocalOpenGallery.current
     Column(Modifier.fillMaxWidth()) {
         if (tools.isNotEmpty()) {
@@ -570,6 +571,8 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
             else -> MarkdownText(text)
         }
+        // Quellen, auf die sich die Antwort stützt – antippen öffnet die Seite
+        if (sources.isNotEmpty()) SourcesRow(sources)
         // Heruntergeladene Bilder (auf dem Gerät)
         if (!streaming && m.imagePaths.isNotEmpty()) {
             val local = m.imagePaths.map { GalleryImage(url = it, title = File(it).name, local = true) }
@@ -617,6 +620,31 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
 private fun SmallAction(icon: ImageVector, label: String, onClick: () -> Unit) {
     IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
         Icon(icon, label, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(17.dp))
+    }
+}
+
+/** „Quellen“ unter der Antwort: nummerierte Kärtchen mit Seite und Titel */
+@Composable
+private fun SourcesRow(sources: List<de.davscha.denkwerk.data.SourceLink>) {
+    val uri = androidx.compose.ui.platform.LocalUriHandler.current
+    Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Quellen", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            sources.forEachIndexed { i, s ->
+                val host = runCatching { java.net.URL(s.url).host.removePrefix("www.") }.getOrDefault(s.url)
+                Column(
+                    Modifier
+                        .widthIn(max = 220.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { runCatching { uri.openUri(s.url) } }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                ) {
+                    Text("${i + 1} · $host", fontSize = 11.sp, color = Mint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(s.title, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }
 

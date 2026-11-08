@@ -62,9 +62,11 @@ class Toolbox(
         put(
             spec(
                 "web_suche",
-                "Sucht im Internet und liefert Titel, Adresse und Kurztext der besten Treffer. " +
+                "Sucht im Internet und liefert die besten Treffer – die ersten Treffer werden gleich gelesen (Artikeltext). " +
                     "Benutzen für aktuelle Informationen, Nachrichten, Preise oder alles nach deinem Wissensstand.",
-                props("anfrage" to "Suchbegriffe, kurz und genau"),
+                JSONObject()
+                    .put("anfrage", JSONObject().put("type", "string").put("description", "Suchbegriffe, kurz und genau"))
+                    .put("treffer_lesen", JSONObject().put("type", "integer").put("description", "Wie viele Treffer gleich gelesen werden (0 bis 4, Standard 3)")),
                 required = listOf("anfrage"),
             )
         )
@@ -207,7 +209,7 @@ class Toolbox(
     suspend fun run(name: String, args: JSONObject): ToolOutput = when (name) {
         "uhrzeit" -> now()
         "rechnen" -> calc(args.optString("ausdruck"))
-        "web_suche" -> search(args.optString("anfrage"))
+        "web_suche" -> search(args.optString("anfrage"), args.optInt("treffer_lesen", 3).coerceIn(0, 4))
         "seite_lesen" -> readPage(args.optString("url"))
         "bilder_auf_seite" -> imagesOnPage(args.optString("url"))
         "videos_suchen" -> searchVideos(
@@ -264,15 +266,44 @@ class Toolbox(
         return ToolOutput("$expr = $shown", "$expr = $shown")
     }
 
-    private fun search(query: String): ToolOutput {
+    private fun search(query: String, readTop: Int = 3): ToolOutput {
         if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
         val results = when {
             searxngUrl().isNotBlank() -> searchSearx(query)
             else -> withFallback({ searchDuckDuckGo(query) }, { searchBing(query) })
         }
         if (results.isEmpty()) return ToolOutput("Keine Treffer für „$query“.", "„$query“ · keine Treffer")
-        val text = results.mapIndexed { i, r -> "${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}" }.joinToString("\n")
-        return ToolOutput("Suchergebnisse für „$query“:\n$text", "„$query“ · ${results.size} Treffer")
+        val list = results.mapIndexed { i, r -> "${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}" }.joinToString("\n")
+
+        // Die besten Treffer gleich lesen – sonst antworten Modelle nur aus den Kurztexten (und reimen sich den Rest zusammen)
+        val terms = query.lowercase().split(Regex("[^a-zäöüß0-9]+")).filter { it.length >= 3 }
+        val budget = pageBudget()
+        val each = if (readTop > 0) (budget / readTop).coerceIn(800, 6000) else 0
+        val read = mutableListOf<de.davscha.denkwerk.data.SourceLink>()
+        val articles = StringBuilder()
+        for (r in results) {
+            if (read.size >= readTop) break
+            if (Regex("\\.(pdf|zip|mp4|jpg|png)(\\?|$)", RegexOption.IGNORE_CASE).containsMatchIn(r.url)) continue
+            val doc = runCatching { fetch(r.url) }.getOrNull() ?: continue
+            val title = doc.title().ifBlank { r.title }
+            val lines = pageLines(doc)
+            // Passende Absätze bevorzugen, sonst den Anfang des Artikels
+            val hits = lines.filter { l -> terms.any { l.lowercase().contains(it) } }
+            val body = (if (hits.size >= 3) hits else lines).joinToString("\n").take(each)
+            if (body.length < 200) continue
+            read += de.davscha.denkwerk.data.SourceLink(title, doc.location())
+            articles.append("### [${read.size}] ").append(title).append('\n').append(doc.location()).append('\n').append(body).append("\n\n")
+        }
+        val forModel = buildString {
+            append("Suchergebnisse für „$query“:\n$list\n")
+            if (articles.isNotEmpty()) {
+                append("\nGelesene Artikel (stütze deine Antwort auf diese Texte und nenne die Quellen mit [Nummer]):\n\n")
+                append(articles)
+            }
+        }
+        val sources = read.ifEmpty { results.take(3).map { de.davscha.denkwerk.data.SourceLink(it.title, it.url) } }
+        val summary = "„$query“ · ${results.size} Treffer" + (if (read.isNotEmpty()) " · ${read.size} gelesen" else "")
+        return ToolOutput(forModel, summary, sources = sources)
     }
 
     private data class Hit(val title: String, val url: String, val snippet: String)
@@ -330,7 +361,11 @@ class Toolbox(
         val budget = pageBudget()
         val cut = text.length > budget
         if (cut) text = text.take(budget) + "\n[… gekürzt, ${text.length} Zeichen insgesamt]"
-        return ToolOutput("Titel: $title\nAdresse: ${doc.location()}\n\n$text", title + (if (cut) " · gekürzt" else ""))
+        return ToolOutput(
+            "Titel: $title\nAdresse: ${doc.location()}\n\n$text",
+            title + (if (cut) " · gekürzt" else ""),
+            sources = listOf(de.davscha.denkwerk.data.SourceLink(title, doc.location())),
+        )
     }
 
     /** Lesbarer Text einer Seite als Zeilen (Achtung: entfernt Menüs usw. aus [doc]). */
@@ -509,7 +544,8 @@ class Toolbox(
         }
         val summary = "$method · ${ranked.size} Treffer" + (if (readTop > 0) " · ${minOf(readTop, ranked.size)} gelesen" else "") +
             (if (gallery.isNotEmpty()) " · ${gallery.size} Bilder" else "")
-        return ToolOutput(forModel, summary, webImages = gallery)
+        val sources = ranked.take(maxOf(readTop, 1)).map { (l, t) -> de.davscha.denkwerk.data.SourceLink(t, l) }
+        return ToolOutput(forModel, summary, webImages = gallery, sources = sources)
     }
 
     // ---------- Ganze Webseite durchsuchen ----------
@@ -596,7 +632,8 @@ class Toolbox(
             }
         }
         val summary = "${pages.size} Seiten" + (if (wantImages) " · ${images.size} Bilder" else "")
-        return ToolOutput(forModel, summary, webImages = gallery)
+        val sources = ordered.take(5).map { de.davscha.denkwerk.data.SourceLink(it.title, it.url) }
+        return ToolOutput(forModel, summary, webImages = gallery, sources = sources)
     }
 
     /** Gleiche Seite = gleiche Adresse ohne www, Schrägstrich am Ende und Tracking-Parameter */
