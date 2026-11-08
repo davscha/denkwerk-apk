@@ -20,6 +20,7 @@ import de.davscha.denkwerk.data.ToolEvent
 import de.davscha.denkwerk.engine.DownloadRequest
 import de.davscha.denkwerk.engine.ToolStreamEvent
 import de.davscha.denkwerk.engine.Toolbox
+import de.davscha.denkwerk.engine.PseudoToolCalls
 import kotlinx.coroutines.CompletableDeferred
 import de.davscha.denkwerk.data.Variant
 import de.davscha.denkwerk.data.Settings
@@ -64,11 +65,14 @@ sealed interface DownloadState {
 /** Ein Eintrag in der Modell-Auswahl oben im Chat. */
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
+private val KNOWN_TOOLS = setOf("uhrzeit", "rechnen", "web_suche", "bilder_suchen", "seite_lesen", "bilder_auf_seite", "herunterladen")
+
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
     "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, seite_lesen, bilder_auf_seite und herunterladen. " +
         "Wenn der Nutzer Bilder sehen möchte, benutze bilder_suchen – die Bilder erscheinen automatisch als Galerie im Chat, " +
         "also keine Linkliste dazu schreiben. " +
+        "Rufe Werkzeuge immer über die Werkzeug-Schnittstelle auf und schreibe niemals JSON wie {\"action\": …} in deine Antwort. " +
         "Nutze web_suche für aktuelle Informationen oder alles nach deinem Wissensstand, seite_lesen wenn eine Adresse genannt wird " +
         "oder ein Treffer genauer gelesen werden soll, rechnen für exakte Rechnungen und uhrzeit für Datum und Uhrzeit. " +
         "herunterladen nur, wenn der Nutzer ausdrücklich Dateien oder Bilder speichern möchte. " +
@@ -577,6 +581,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }.collect { ev ->
                         when (ev) {
                             is ToolStreamEvent.Text -> onText(ev.text)
+                            is ToolStreamEvent.RemoveText -> {
+                                val at = streamingText.indexOf(ev.text)
+                                if (at >= 0) streamingText = streamingText.removeRange(at, at + ev.text.length).trimEnd() + "\n\n"
+                            }
                             is ToolStreamEvent.ToolStart -> {
                                 // Text vor dem Werkzeug-Aufruf ist meist nur „Ich schaue mal nach …“ – Absatz dahinter
                                 if (streamingText.isNotBlank() && !streamingText.endsWith("\n\n")) streamingText += "\n\n"
@@ -723,7 +731,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val t = if (m.fromUser) {
                 val p = fullPrompt(m)
                 if (m.imagePaths.isNotEmpty()) "[Bild] $p" else p
-            } else m.text
+            } else PseudoToolCalls.strip(m.text, KNOWN_TOOLS)
             if (used + t.length > budget && kept.isNotEmpty()) break
             kept.addFirst(m.copy(text = t))
             used += t.length

@@ -20,4 +20,6 @@ sealed interface ToolStreamEvent {
     data class Text(val text: String) : ToolStreamEvent
     data class ToolStart(val name: String, val args: JSONObject) : ToolStreamEvent
     data class ToolDone(val name: String, val output: ToolOutput) : ToolStreamEvent
+    /** Ein als Text geschriebener Werkzeug-Aufruf soll aus der sichtbaren Antwort verschwinden */
+    data class RemoveText(val text: String) : ToolStreamEvent
 }

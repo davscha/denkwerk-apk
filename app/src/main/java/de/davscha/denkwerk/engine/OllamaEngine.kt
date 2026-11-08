@@ -170,8 +170,24 @@ class OllamaEngine(
         for (round in 1..MAX_TOOL_ROUNDS) {
             // In der letzten Runde keine Werkzeuge mehr anbieten – dann muss eine Antwort kommen
             val offer = if (round < MAX_TOOL_ROUNDS) tools else null
-            val (reply, calls) = streamChat(JSONArray(history + turn), offer) { emit(ToolStreamEvent.Text(it)) }
+            val (rawReply, realCalls) = streamChat(JSONArray(history + turn), offer) { emit(ToolStreamEvent.Text(it)) }
             if (stopped) break
+            var reply = rawReply
+            var calls = realCalls
+            // Kein echter Aufruf? Dann nach Text-Aufrufen suchen ({"action": "bilder_suchen", …})
+            if ((calls == null || calls.length() == 0) && offer != null) {
+                val pseudo = PseudoToolCalls.find(reply, toolNames(tools))
+                if (pseudo.isNotEmpty()) {
+                    pseudo.forEach { p ->
+                        emit(ToolStreamEvent.RemoveText(p.raw))
+                        reply = reply.replace(p.raw, "")
+                    }
+                    reply = reply.trim()
+                    calls = JSONArray().apply {
+                        pseudo.forEach { p -> put(JSONObject().put("function", JSONObject().put("name", p.name).put("arguments", p.args))) }
+                    }
+                }
+            }
             if (calls == null || calls.length() == 0) {
                 if (reply.isNotEmpty()) turn += JSONObject().put("role", "assistant").put("content", reply)
                 break
@@ -196,6 +212,9 @@ class OllamaEngine(
         rememberTurn(text, imagePaths)
         history += turn.drop(1)
     }.flowOn(Dispatchers.IO)
+
+    private fun toolNames(tools: JSONArray): Set<String> =
+        (0 until tools.length()).mapNotNull { tools.optJSONObject(it)?.optJSONObject("function")?.optString("name") }.toSet()
 
     private fun userMessage(text: String, imagePaths: List<String>): JSONObject {
         val userMsg = JSONObject().put("role", "user").put("content", text)
