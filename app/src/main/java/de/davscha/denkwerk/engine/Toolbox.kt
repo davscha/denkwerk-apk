@@ -266,7 +266,10 @@ class Toolbox(
 
     private fun search(query: String): ToolOutput {
         if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
-        val results = if (searxngUrl().isNotBlank()) searchSearx(query) else searchDuckDuckGo(query)
+        val results = when {
+            searxngUrl().isNotBlank() -> searchSearx(query)
+            else -> withFallback({ searchDuckDuckGo(query) }, { searchBing(query) })
+        }
         if (results.isEmpty()) return ToolOutput("Keine Treffer für „$query“.", "„$query“ · keine Treffer")
         val text = results.mapIndexed { i, r -> "${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}" }.joinToString("\n")
         return ToolOutput("Suchergebnisse für „$query“:\n$text", "„$query“ · ${results.size} Treffer")
@@ -616,7 +619,21 @@ class Toolbox(
 
     private fun reverseSearch(arg: String): ToolOutput {
         val image = resolveImage(arg)
-        val r = ReverseImageSearch.yandex(image)
+        var r = runCatching { ReverseImageSearch.yandex(image) }.getOrNull()
+        // Kann Yandex die Adresse nicht selbst laden (z. B. replicate.delivery), Bild hier laden und hochladen
+        if ((r == null || (r.sites.isEmpty() && r.similar.isEmpty())) && image.startsWith("http")) {
+            val tmp = File.createTempFile("rueck", ".jpg")
+            try {
+                val bytes = URL(image).openConnection().apply {
+                    connectTimeout = 10_000; readTimeout = 30_000; setRequestProperty("User-Agent", USER_AGENT)
+                }.getInputStream().use { it.readBytes() }
+                tmp.writeBytes(bytes)
+                r = ReverseImageSearch.yandex(tmp.absolutePath)
+            } finally {
+                tmp.delete()
+            }
+        }
+        if (r == null) throw IOException("Yandex hat keine auswertbare Antwort geliefert")
         if (r.sites.isEmpty() && r.similar.isEmpty()) {
             return ToolOutput("Die Rückwärtssuche hat nichts gefunden (Ergebnisseite: ${r.resultPage}).", "nichts gefunden", ok = false)
         }
@@ -653,6 +670,60 @@ class Toolbox(
             de.davscha.denkwerk.data.WebImage(it.thumb, title = "${"%.0f".format(it.similarity)} % · ${it.title}", source = it.urls.firstOrNull().orEmpty())
         }
         return ToolOutput(forModel, "${hits.size} Treffer · beste ${"%.0f".format(hits.first().similarity)} %", webImages = gallery)
+    }
+
+    // ---------- Rückfall: Bing, wenn DuckDuckGo blockt ----------
+
+    /** Wann DuckDuckGo zuletzt geblockt hat – danach 10 Minuten direkt Bing nehmen */
+    @Volatile private var ddgBlockedUntil = 0L
+
+    /** Erst DuckDuckGo, bei Fehler oder leerem Ergebnis Bing */
+    private fun <T> withFallback(ddg: () -> List<T>, bing: () -> List<T>): List<T> {
+        if (System.currentTimeMillis() > ddgBlockedUntil) {
+            val r = runCatching { ddg() }
+            r.getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
+            if (r.isFailure) ddgBlockedUntil = System.currentTimeMillis() + 10 * 60_000
+        }
+        return bing()
+    }
+
+    /** Bing: abgesicherte Suche als adlt=strict|moderate|off */
+    private fun bingAdlt(): String = when (safeSearch()) { 0 -> "strict"; 1 -> "moderate"; else -> "off" }
+
+    private fun bingDoc(url: String): Document =
+        Jsoup.connect(url)
+            .userAgent(USER_AGENT)
+            .header("Accept-Language", "de-DE,de;q=0.9")
+            .cookie("SRCHHPGUSR", "ADLT=${bingAdlt().uppercase()}")
+            .timeout(15_000)
+            .get()
+
+    /** Bing-Links laufen teils über /ck/a?…&u=a1<Base64> – echte Adresse auspacken */
+    private fun unwrapBing(href: String): String {
+        if (!href.contains("bing.com/ck/a")) return href
+        val u = Regex("[?&]u=a1([^&]+)").find(href)?.groupValues?.get(1) ?: return href
+        return runCatching {
+            String(android.util.Base64.decode(u, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP))
+        }.getOrDefault(href)
+    }
+
+    private fun searchBing(query: String): List<Hit> {
+        val doc = bingDoc("https://www.bing.com/search?q=" + URLEncoder.encode(query, "UTF-8") + "&setlang=de&cc=DE&adlt=" + bingAdlt())
+        return doc.select("li.b_algo").mapNotNull { li ->
+            val a = li.selectFirst("h2 a") ?: return@mapNotNull null
+            Hit(a.text(), unwrapBing(a.attr("abs:href")), li.selectFirst(".b_caption p, p")?.text().orEmpty())
+        }.filter { it.url.startsWith("http") }.take(8)
+    }
+
+    /** Bing-Bildersuche: jedes Bild hat ein m-Attribut mit JSON (murl = Bild, turl = Vorschau, purl = Seite) */
+    private fun searchImagesBing(query: String): List<de.davscha.denkwerk.data.WebImage> {
+        val doc = bingDoc("https://www.bing.com/images/async?q=" + URLEncoder.encode(query, "UTF-8") + "&first=0&count=35&mmasync=1&adlt=" + bingAdlt())
+        return doc.select("a.iusc").mapNotNull { a ->
+            val m = runCatching { JSONObject(a.attr("m")) }.getOrNull() ?: return@mapNotNull null
+            val url = m.optString("murl")
+            if (!url.startsWith("http")) return@mapNotNull null
+            de.davscha.denkwerk.data.WebImage(url, thumb = m.optString("turl"), title = m.optString("t"), source = m.optString("purl"))
+        }
     }
 
     // ---------- Videosuche ----------
@@ -995,7 +1066,10 @@ class Toolbox(
 
     private fun searchImages(query: String, count: Int): ToolOutput {
         if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
-        val found = (if (searxngUrl().isNotBlank()) searchImagesSearx(query) else searchImagesDdg(query)).take(count)
+        val found = when {
+            searxngUrl().isNotBlank() -> searchImagesSearx(query)
+            else -> withFallback({ searchImagesDdg(query) }, { searchImagesBing(query) })
+        }.take(count)
         if (found.isEmpty()) return ToolOutput("Keine Bilder für „$query“ gefunden.", "„$query“ · keine Bilder")
         val list = found.mapIndexed { i, w -> "${i + 1}. ${w.title} – ${w.url} (Seite: ${w.source})" }.joinToString("\n")
         return ToolOutput(

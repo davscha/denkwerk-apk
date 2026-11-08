@@ -170,7 +170,17 @@ class OllamaEngine(
         for (round in 1..MAX_TOOL_ROUNDS) {
             // In der letzten Runde keine Werkzeuge mehr anbieten – dann muss eine Antwort kommen
             val offer = if (round < MAX_TOOL_ROUNDS) tools else null
-            val (rawReply, realCalls) = streamChat(JSONArray(history + turn), offer) { emit(ToolStreamEvent.Text(it)) }
+            // Hängt das Modell in einer Schleife (Ollama: „token repeat limit reached“), einmal mit stärkerer
+            // Wiederholungsstrafe neu versuchen – der kaputte Text verschwindet vorher wieder
+            var partial = StringBuilder()
+            val (rawReply, realCalls) = try {
+                streamChat(JSONArray(history + turn), offer) { partial.append(it); emit(ToolStreamEvent.Text(it)) }
+            } catch (e: IOException) {
+                if (!(e.message.orEmpty().contains("repeat", ignoreCase = true))) throw e
+                if (partial.isNotEmpty()) emit(ToolStreamEvent.RemoveText(partial.toString()))
+                partial = StringBuilder()
+                streamChat(JSONArray(history + turn), offer, boost = true) { partial.append(it); emit(ToolStreamEvent.Text(it)) }
+            }
             if (stopped) break
             var reply = rawReply
             var calls = realCalls
@@ -243,6 +253,8 @@ class OllamaEngine(
     private suspend fun streamChat(
         messages: JSONArray,
         tools: JSONArray?,
+        /** true = Neuversuch nach einer Schleife: stärkere Wiederholungsstrafe, etwas mehr Zufall */
+        boost: Boolean = false,
         onText: suspend (String) -> Unit,
     ): Pair<String, JSONArray?> {
         val c = client ?: error("Kein Ollama-Modell geladen")
@@ -254,10 +266,10 @@ class OllamaEngine(
             .put(
                 "options",
                 JSONObject()
-                    .put("temperature", temperature)
+                    .put("temperature", if (boost) minOf(temperature + 0.3, 1.2) else temperature)
                     .put("num_ctx", contextProvider())
                     // leichte Strafe für Wiederholungen – verhindert Schleifen wie „getgetget…“
-                    .put("repeat_penalty", 1.1)
+                    .put("repeat_penalty", if (boost) 1.25 else 1.1)
                     .put("repeat_last_n", 256),
             )
         if (tools != null && tools.length() > 0) body.put("tools", tools)

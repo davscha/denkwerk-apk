@@ -717,7 +717,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 finalText = streamingText
             } catch (e: Throwable) {
                 finalText = streamingText
-                error = e.message ?: e.javaClass.simpleName
+                error = (e.message ?: e.javaClass.simpleName).let { msg ->
+                    if (msg.contains("repeat limit", ignoreCase = true))
+                        "Das Modell hing in einer Wiederholungsschleife fest. Tipp: „Neu erzeugen“ oder ein anderes Modell probieren."
+                    else msg
+                }
             } finally {
                 val text = when {
                     error != null && finalText.isBlank() -> "Fehler: $error"
