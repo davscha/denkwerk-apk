@@ -582,7 +582,7 @@ private fun AssistantMessage(vm: AppViewModel, m: ChatMessage, isLast: Boolean) 
             m.isError -> Text(text, color = MaterialTheme.colorScheme.error, fontSize = 15.sp)
             else -> {
                 // Prompt-Blöcke bekommen einen „🎨 Malen“-Knopf, sobald ComfyUI eingerichtet ist
-                val paint: ((String) -> Unit)? = if (!streaming && vm.recipe.checkpoint.isNotBlank()) { p -> vm.paintFromPrompt(p) } else null
+                val paint: ((String) -> Unit)? = if (!streaming && vm.paintAvailable) { p -> vm.paintFromPrompt(p) } else null
                 CompositionLocalProvider(LocalPaint provides paint) { MarkdownText(text) }
             }
         }

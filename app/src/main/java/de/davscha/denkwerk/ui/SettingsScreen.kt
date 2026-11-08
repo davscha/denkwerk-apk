@@ -598,9 +598,10 @@ private fun AboutSection(vm: AppViewModel) {
 private fun ComfySection(vm: AppViewModel) {
     var host by remember { mutableStateOf(vm.settings.comfyHost) }
     var port by remember { mutableStateOf(vm.settings.comfyPort.toString()) }
-    var ckptMenu by remember { mutableStateOf(false) }
     val r = vm.recipe
-    Section(Icons.Default.Brush, "Bilder malen (ComfyUI)", "NoobAI-Checkpoints und LoRAs aus den denkwerk-Ordnern auf dem PC") {
+    var width by remember { mutableStateOf(r.width.toString()) }
+    var height by remember { mutableStateOf(r.height.toString()) }
+    Section(Icons.Default.Brush, "Bilder malen (ComfyUI)", "Testphase: Anima Photo Turbo auf dem PC") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = host, onValueChange = { host = it }, label = { Text("IP-Adresse") }, singleLine = true,
@@ -615,7 +616,7 @@ private fun ComfySection(vm: AppViewModel) {
             Button(
                 onClick = { vm.saveComfy(host, port.toIntOrNull() ?: 8080); vm.refreshComfy() },
                 enabled = !vm.comfyBusy,
-            ) { Text("Verbinden & laden") }
+            ) { Text("Verbinden & prüfen") }
             Spacer(Modifier.width(10.dp))
             if (vm.comfyBusy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp), color = Mint)
         }
@@ -623,49 +624,33 @@ private fun ComfySection(vm: AppViewModel) {
             Text(vm.comfyStatus, fontSize = 12.sp, color = if (vm.comfyStatus.startsWith("Verbunden")) Mint else MaterialTheme.colorScheme.error)
         }
         Text(
-            "Denkwerk benutzt nur: models/checkpoints/denkwerk/noobai/ und models/loras/denkwerk/noobai/char/ bzw. …/style/",
+            "Benutzt: ${r.unet} (diffusion_models), ${r.clip} (text_encoders), ${r.vae} (vae)",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // Checkpoint
-        Text("Checkpoint (NoobAI)", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-        Box {
-            OutlinedButton(onClick = { ckptMenu = true }, enabled = vm.comfyCheckpoints.isNotEmpty()) {
-                Text(if (r.checkpoint.isBlank()) "Erst verbinden" else ComfyClient.shortName(r.checkpoint), maxLines = 1)
-                Icon(Icons.Default.KeyboardArrowDown, null)
-            }
-            DropdownMenu(expanded = ckptMenu, onDismissRequest = { ckptMenu = false }) {
-                vm.comfyCheckpoints.forEach { c ->
-                    DropdownMenuItem(text = { Text(ComfyClient.shortName(c)) }, onClick = { ckptMenu = false; vm.updateRecipe(r.copy(checkpoint = c)) })
-                }
-            }
+        // Bildgröße
+        Text("Bildgröße", fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = width,
+                onValueChange = { v -> width = v.filter(Char::isDigit).take(4); width.toIntOrNull()?.let { vm.updateRecipe(vm.recipe.copy(width = it)) } },
+                label = { Text("Breite") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f),
+            )
+            Text("×", fontSize = 16.sp)
+            OutlinedTextField(
+                value = height,
+                onValueChange = { v -> height = v.filter(Char::isDigit).take(4); height.toIntOrNull()?.let { vm.updateRecipe(vm.recipe.copy(height = it)) } },
+                label = { Text("Höhe") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f),
+            )
         }
-
-        // LoRAs: Figuren und Stile
-        for ((kind, title) in listOf("char" to "Figuren-LoRAs", "style" to "Stil-LoRAs")) {
-            val list = r.loras.filter { it.kind == kind }
-            if (list.isEmpty()) continue
-            Text(title, fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
-            list.forEach { l -> LoraRow(vm, l) }
-        }
-
-        // Format und Sampler
-        Text("Format", fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("quadrat" to "1:1", "hoch" to "Hoch", "quer" to "Quer", "breit" to "Breit").forEach { (f, label) ->
-                val sel = r.format == f
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(if (sel) Mint else MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { vm.updateRecipe(r.copy(format = f)) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                ) { Text(label, fontSize = 13.sp, color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface) }
-            }
+        if (r.safeWidth != r.width || r.safeHeight != r.height) {
+            Text("Wird gemalt als ${r.safeWidth}×${r.safeHeight} (Vielfache von 16, 256–2048)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text("Schritte: ${r.steps}", fontSize = 13.sp)
-        Slider(value = r.steps.toFloat(), onValueChange = { vm.updateRecipe(r.copy(steps = it.toInt())) }, valueRange = 4f..40f, steps = 35)
+        Slider(value = r.steps.toFloat(), onValueChange = { vm.updateRecipe(r.copy(steps = it.toInt())) }, valueRange = 1f..40f, steps = 38)
         Text("CFG: ${"%.1f".format(r.cfg)}", fontSize = 13.sp)
         Slider(value = r.cfg, onValueChange = { vm.updateRecipe(r.copy(cfg = (it * 2).toInt() / 2f)) }, valueRange = 1f..10f)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -675,7 +660,7 @@ private fun ComfySection(vm: AppViewModel) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Jugendfreie Bilder", fontSize = 14.sp)
-                Text("„nsfw“ im Negativ-Prompt", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("„safe“ vorn im Prompt", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked = r.sfw, onCheckedChange = { vm.updateRecipe(r.copy(sfw = it)) })
         }
@@ -687,31 +672,3 @@ private fun ComfySection(vm: AppViewModel) {
     }
 }
 
-@Composable
-private fun LoraRow(vm: AppViewModel, l: de.davscha.denkwerk.data.LoraSetting) {
-    fun update(n: de.davscha.denkwerk.data.LoraSetting) =
-        vm.updateRecipe(vm.recipe.copy(loras = vm.recipe.loras.map { if (it.name == l.name) n else it }))
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (l.enabled) Mint.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(ComfyClient.shortName(l.name), fontSize = 14.sp, fontWeight = if (l.enabled) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.weight(1f))
-            Switch(checked = l.enabled, onCheckedChange = { update(l.copy(enabled = it)) })
-        }
-        if (l.enabled) {
-            Text("Stärke: ${"%.2f".format(l.strength)}", fontSize = 12.sp)
-            Slider(value = l.strength, onValueChange = { update(l.copy(strength = (it * 20).toInt() / 20f)) }, valueRange = 0f..1.5f)
-            OutlinedTextField(
-                value = l.trigger,
-                onValueChange = { update(l.copy(trigger = it)) },
-                label = { Text("Trigger-Wörter") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}

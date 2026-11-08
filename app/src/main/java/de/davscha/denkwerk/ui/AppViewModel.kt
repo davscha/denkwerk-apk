@@ -18,7 +18,6 @@ import de.davscha.denkwerk.data.DocAttachment
 import de.davscha.denkwerk.data.SavedPrompt
 import de.davscha.denkwerk.data.MemoryFact
 import de.davscha.denkwerk.data.ImageRecipe
-import de.davscha.denkwerk.data.LoraSetting
 import de.davscha.denkwerk.engine.ComfyClient
 import de.davscha.denkwerk.data.ToolEvent
 import de.davscha.denkwerk.engine.DownloadRequest
@@ -345,8 +344,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         allowedDirs = { listOf(store.dataDir, context.filesDir, context.cacheDir) },
         sauceNaoKey = { settings.sauceNaoKey },
         videoFilter = { Triple(settings.videoShowYoutube, settings.videoShowSocial, settings.videoBlocked) },
-        paint = { prompt, format, same -> paintWithSeed(prompt, format, same) },
-        paintReady = { recipe.checkpoint.isNotBlank() },
+        paint = { prompt, same -> paintWithSeed(prompt, same) },
+        paintReady = { paintAvailable },
         recipeInfo = { recipeDescription() },
     )
 
@@ -357,9 +356,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var comfyBusy by mutableStateOf(false)
         private set
-    /** Checkpoints, die in checkpoints/denkwerk/noobai/ liegen */
-    var comfyCheckpoints by mutableStateOf<List<String>>(emptyList())
-        private set
+    /** ComfyUI eingetragen? Dann wird bild_malen angeboten */
+    val paintAvailable: Boolean get() = settings.comfyHost.isNotBlank()
     /** Fortschritt des laufenden Bildes in Sekunden (null = kein Bild in Arbeit) */
     var paintSeconds by mutableStateOf<Int?>(null)
         private set
@@ -374,7 +372,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         settings.comfyPort = port
     }
 
-    /** Verbinden und Checkpoints/LoRAs aus den denkwerk-Ordnern laden; neue LoRAs bekommen Trigger aus den Metadaten */
+    /** Verbinden und prüfen, ob die Anima-Dateien auf dem PC liegen */
     fun refreshComfy() {
         if (comfyBusy) return
         comfyBusy = true
@@ -383,23 +381,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val c = ComfyClient(settings.comfyHost, settings.comfyPort)
                 val info = withContext(Dispatchers.IO) { c.test() }
-                val family = recipe.family
-                val ckpts = withContext(Dispatchers.IO) { c.checkpoints(family) }
-                val loraNames = withContext(Dispatchers.IO) { c.loras(family) }
-                comfyCheckpoints = ckpts
-                // Vorhandene Einstellungen behalten, neue LoRAs ergänzen, verschwundene entfernen
-                val old = recipe.loras.associateBy { it.name }
-                val merged = loraNames.map { n ->
-                    old[n] ?: LoraSetting(
-                        name = n,
-                        kind = ComfyClient.kindOf(n),
-                        trigger = withContext(Dispatchers.IO) { c.suggestTriggers(n) },
-                    )
-                }
-                val ckpt = recipe.checkpoint.takeIf { it in ckpts } ?: ckpts.firstOrNull().orEmpty()
-                updateRecipe(recipe.copy(checkpoint = ckpt, loras = merged))
-                comfyStatus = "Verbunden · $info · ${ckpts.size} Checkpoints · ${loraNames.size} LoRAs" +
-                    (if (ckpts.isEmpty()) " – lege Checkpoints in models/checkpoints/denkwerk/$family/" else "")
+                val missing = withContext(Dispatchers.IO) { runCatching { c.missingFiles(recipe) }.getOrDefault(emptyList()) }
+                comfyStatus = if (missing.isEmpty()) "Verbunden · $info · Anima-Dateien gefunden"
+                else "Verbunden · $info – es fehlt: " + missing.joinToString()
             } catch (e: Throwable) {
                 comfyStatus = "Nicht erreichbar: ${e.message ?: e.javaClass.simpleName}"
             } finally {
@@ -408,13 +392,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Für die Werkzeug-Beschreibung: welche LoRAs aktiv sind */
-    private fun recipeDescription(): String {
-        val r = recipe
-        val active = r.loras.filter { it.enabled }
-        return "Modell: ${ComfyClient.shortName(r.checkpoint)} (NoobAI)." +
-            (if (active.isNotEmpty()) " Aktive LoRAs: " + active.joinToString { "${ComfyClient.shortName(it.name)} (${if (it.kind == "char") "Figur" else "Stil"})" } + "." else "")
-    }
+    /** Für die Werkzeug-Beschreibung */
+    private fun recipeDescription(): String = "Modell: ${ComfyClient.shortName(recipe.unet)} (Anima), Bildgröße ${recipe.safeWidth}×${recipe.safeHeight}."
 
     /**
      * Malt ein Bild: Ollama-Modell vorher entladen (Grafikspeicher!), Prompt zusammensetzen
@@ -443,7 +422,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         currentChat?.messages.orEmpty().asReversed().flatMap { it.imagePaths.reversed() }.firstNotNullOfOrNull { ComfyClient.seedOf(it) }
 
     /** Für das Werkzeug: Seed wählen (festgehalten › gleiches Bild › neu) und malen */
-    private suspend fun paintWithSeed(tags: String, format: String, same: Boolean): Pair<String, String> {
+    private suspend fun paintWithSeed(tags: String, same: Boolean): Pair<String, String> {
         val reuse = if (same || sameImageWords.containsMatchIn(lastUserText)) lastPaintedSeed() else null
         val seed = seedLock ?: reuse
         val note = when {
@@ -451,25 +430,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             reuse != null -> " · gleicher Seed"
             else -> ""
         }
-        return paintImage(tags, format, seed) to note
+        return paintImage(tags, seed) to note
     }
 
-    suspend fun paintImage(tags: String, format: String, fixedSeed: Long? = null): String {
+    suspend fun paintImage(tags: String, fixedSeed: Long? = null): String {
         val r = recipe
-        if (r.checkpoint.isBlank()) throw java.io.IOException("Kein Checkpoint gewählt (Einstellungen → Bilder malen)")
         withContext(Dispatchers.Main) { paintSeconds = 0 }
         try {
             // Grafikspeicher frei machen: Ollama-Modell entladen (lädt bei der nächsten Frage von selbst wieder)
             if (settings.source == Source.OLLAMA && settings.ollamaModel.isNotBlank()) {
                 withContext(Dispatchers.IO) { runCatching { OllamaClient(settings.ollamaHost, settings.ollamaPort).unload(settings.ollamaModel) } }
             }
-            val triggers = r.loras.filter { it.enabled && it.trigger.isNotBlank() }.joinToString(", ") { it.trigger }
             val cleanTags = tags.replace(Regex("```\\w*"), "").replace(Regex("\\s*\\n\\s*"), ", ").trim().trim(',')
-            val positive = listOf(ComfyClient.NOOBAI_QUALITY, triggers, cleanTags).filter { it.isNotBlank() }.joinToString(", ")
-            val negative = (if (r.sfw) "nsfw, " else "") + ComfyClient.NOOBAI_NEGATIVE
-            val fmt = format.takeIf { it in setOf("quadrat", "hoch", "quer", "breit") } ?: r.format
+            val positive = (if (r.sfw) "safe, " else "") + cleanTags
             val seed = fixedSeed ?: (Math.random() * 1e15).toLong()
-            val wf = ComfyClient.buildWorkflow(r, positive, negative, fmt, seed)
+            val wf = ComfyClient.buildWorkflow(r, positive, seed)
             val bytes = withContext(Dispatchers.IO) {
                 ComfyClient(settings.comfyHost, settings.comfyPort).run(wf) { s ->
                     viewModelScope.launch(Dispatchers.Main) { paintSeconds = s }
@@ -490,18 +465,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun paintFromPrompt(prompt: String) {
         val chat = currentChat ?: return
         if (paintSeconds != null) { toast = "Es wird gerade schon ein Bild gemalt."; return }
-        if (recipe.checkpoint.isBlank()) { toast = "Erst ComfyUI einrichten: Einstellungen → Bilder malen"; openSettings(); return }
+        if (!paintAvailable) { toast = "Erst ComfyUI einrichten: Einstellungen → Bilder malen"; openSettings(); return }
         val short = prompt.replace(Regex("\\s+"), " ").take(60)
         val msg = ChatMessage(
             fromUser = false,
             text = "",
-            modelLabel = "ComfyUI · " + ComfyClient.shortName(recipe.checkpoint),
+            modelLabel = "ComfyUI · " + ComfyClient.shortName(recipe.unet),
             toolEvents = listOf(ToolEvent("bild_malen", short, "läuft …", running = true)),
         )
         upsert(chat.copy(messages = chat.messages + msg))
         viewModelScope.launch {
             val start = System.currentTimeMillis()
-            val result = runCatching { paintImage(prompt, recipe.format, seedLock) }
+            val result = runCatching { paintImage(prompt, seedLock) }
             val secs = (System.currentTimeMillis() - start) / 1000
             val c = chats.firstOrNull { it.id == chat.id } ?: return@launch
             val done = result.fold(

@@ -43,8 +43,8 @@ class Toolbox(
     private val allowedDirs: () -> List<File> = { emptyList() },
     /** SauceNAO-Schlüssel, leer = Werkzeug nicht anbieten */
     private val sauceNaoKey: () -> String = { "" },
-    /** Bild malen über ComfyUI: (Prompt, Format, gleiches Bild) → (Dateipfad, Hinweis für die Karte) */
-    private val paint: suspend (String, String, Boolean) -> Pair<String, String> = { _, _, _ -> throw IOException("ComfyUI ist nicht eingerichtet") },
+    /** Bild malen über ComfyUI: (Prompt, gleiches Bild) → (Dateipfad, Hinweis für die Karte) */
+    private val paint: suspend (String, Boolean) -> Pair<String, String> = { _, _ -> throw IOException("ComfyUI ist nicht eingerichtet") },
     /** true = ComfyUI eingerichtet (Checkpoint gewählt) – nur dann wird bild_malen angeboten */
     private val paintReady: () -> Boolean = { false },
     /** Kurzbeschreibung des Bildrezepts für die Werkzeug-Beschreibung (Checkpoint, LoRAs, Trigger) */
@@ -121,11 +121,9 @@ class Toolbox(
                     "bild_malen",
                     "Malt ein Bild mit ComfyUI auf dem PC des Nutzers (Anime-/Illustrationsmodell). Der Prompt ist eine Kommaliste im " +
                         "Danbooru-Tag-Stil auf Englisch (z. B. \"1girl, solo, long hair, red kimono, cherry blossoms, night\"). " +
-                        "Qualitäts-Tags und LoRA-Trigger setzt Denkwerk selbst davor. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
+                        "Bildgröße stellt der Nutzer in den Einstellungen ein. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
                     JSONObject()
                         .put("prompt", JSONObject().put("type", "string").put("description", "Danbooru-Tags, durch Kommas getrennt"))
-                        .put("format", JSONObject().put("type", "string").put("enum", JSONArray(listOf("quadrat", "hoch", "quer", "breit")))
-                            .put("description", "Bildformat (Standard aus den Einstellungen)"))
                         .put("gleiches_bild", JSONObject().put("type", "boolean")
                             .put("description", "true, wenn das zuletzt gemalte Bild nur abgeändert werden soll (gleicher Aufbau, gleicher Seed). " +
                                 "Dann die alten Tags übernehmen und nur die gewünschten Änderungen einbauen.")),
@@ -270,7 +268,7 @@ class Toolbox(
         "bild_malen" -> {
             val start = System.currentTimeMillis()
             val same = args.optBoolean("gleiches_bild", false) || args.optString("gleiches_bild") == "true"
-            val (path, note) = paint(args.optString("prompt"), args.optString("format"), same)
+            val (path, note) = paint(args.optString("prompt"), same)
             val secs = (System.currentTimeMillis() - start) / 1000
             ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s$note", images = listOf(path))
         }
