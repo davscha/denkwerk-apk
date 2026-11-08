@@ -1,6 +1,7 @@
 package de.davscha.denkwerk.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -234,19 +235,46 @@ fun MarkdownText(
                     Text(inlineMarkdown(b.text, codeBg), style = body.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
                 is Block.Code -> CodeBlock(b.language, b.code)
-                is Block.Table -> Text(
-                    b.lines.filterNot { Regex("^\\|?\\s*:?-{2,}").containsMatchIn(it) }
-                        .joinToString("\n") { row -> row.trim('|').split("|").joinToString("  │  ") { it.trim() } },
-                    style = body.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 20.sp),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(codeBg)
-                        .horizontalScroll(rememberScrollState())
-                        .padding(10.dp),
-                )
+                is Block.Table -> TableBlock(b.lines, codeBg)
                 Block.Rule -> HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                 is Block.Images -> ImageStrip(b.images, onOpen = { i -> openGallery(b.images, i) })
             }
+        }
+    }
+}
+
+/** Markdown-Tabelle als echtes Raster: Kopfzeile fett, Zellen mit **fett** usw., zur Seite wischbar. */
+@Composable
+private fun TableBlock(lines: List<String>, cellBg: Color) {
+    val rows = lines
+        .filterNot { Regex("^\\|?\\s*:?-{2,}").containsMatchIn(it) }
+        .map { row -> row.trim().trim('|').split("|").map { it.trim() } }
+        .filter { r -> r.any { it.isNotEmpty() } }
+    if (rows.isEmpty()) return
+    val cols = rows.maxOf { it.size }
+    // Spaltenbreite nach dem längsten Inhalt (ohne Markdown-Zeichen), begrenzt
+    val widths = (0 until cols).map { c ->
+        val longest = rows.maxOf { r -> r.getOrNull(c)?.replace(Regex("[*_`]"), "")?.length ?: 0 }
+        (longest * 7.5f).coerceIn(70f, 260f).dp
+    }
+    val textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 19.sp)
+    Column(
+        Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(10.dp))
+            .horizontalScroll(rememberScrollState()),
+    ) {
+        rows.forEachIndexed { ri, r ->
+            Row(Modifier.background(if (ri == 0) cellBg else Color.Transparent)) {
+                for (c in 0 until cols) {
+                    Text(
+                        inlineMarkdown(r.getOrNull(c).orEmpty(), cellBg),
+                        style = if (ri == 0) textStyle.copy(fontWeight = FontWeight.SemiBold) else textStyle,
+                        modifier = Modifier.width(widths[c]).padding(horizontal = 10.dp, vertical = 7.dp),
+                    )
+                }
+            }
+            if (ri < rows.lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
         }
     }
 }

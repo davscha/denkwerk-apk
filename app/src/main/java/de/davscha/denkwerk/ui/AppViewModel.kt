@@ -657,7 +657,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (basePrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
         val useTools = toolsActive && eng is OllamaEngine
         val withMemory = basePrompt + memoryBlock()
-        val systemPrompt = if (useTools) withMemory + "\n\n" + TOOL_HINT else withMemory
+        val today = java.text.SimpleDateFormat("EEEE, d. MMMM yyyy", java.util.Locale.GERMANY).format(java.util.Date())
+        val systemPrompt = if (useTools) {
+            withMemory + "\n\n" + TOOL_HINT + " Heute ist $today. Schreibe in Suchanfragen statt „gestern“, „heute“ oder „letzte Woche“ " +
+                "immer das konkrete Datum (z. B. „7. November 2026“)."
+        } else withMemory
         val reply = ChatMessage(fromUser = false, text = "", modelLabel = activeLabel)
         streamingTools = emptyList()
         streamingWebImages = emptyList()
@@ -818,10 +822,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val head = lines.indexOfLast { l ->
             Regex("^\\s*(#{1,6}\\s*)?[*_]{0,2}(Quellen|Quelle|Quellenangaben|Sources)[*_]{0,2}\\s*:?[*_]{0,2}\\s*$", RegexOption.IGNORE_CASE).matches(l)
         }
-        if (head < 0) return text
-        val rest = lines.drop(head + 1).filter { it.isNotBlank() }
+        // Auch Überschriften wie „Quellen ([1], [2])“ oder „**Quellen & Hinweise**“
+        val head2 = if (head >= 0) head else lines.indexOfLast { l ->
+            Regex("^\\s*(#{1,6}\\s*)?[*_]{0,2}(Quellen|Quellenangaben|Sources)\\b.{0,40}$", RegexOption.IGNORE_CASE).matches(l)
+        }
+        if (head2 < 0) return text
+        val rest = lines.drop(head2 + 1).filter { it.isNotBlank() }
         val onlyList = rest.isNotEmpty() && rest.all { Regex("^\\s*([-*•]|\\d+[.)]|\\[\\d+])").containsMatchIn(it) }
-        return if (onlyList) lines.take(head).joinToString("\n").trimEnd() else text
+        // … oder ein kurzer Absatz, der nur sagt, woher die Infos stammen
+        val onlySourceTalk = rest.isNotEmpty() && rest.size <= 3 && rest.joinToString(" ").length < 500 &&
+            Regex("quelle|basier|stamm|artikel|bericht|\\[\\d+]", RegexOption.IGNORE_CASE).containsMatchIn(rest.joinToString(" "))
+        return if (onlyList || onlySourceTalk || rest.isEmpty()) lines.take(head2).joinToString("\n").trimEnd() else text
     }
 
     /** Kurze Beschreibung der Werkzeug-Argumente fürs Kärtchen */

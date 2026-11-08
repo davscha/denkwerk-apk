@@ -287,8 +287,17 @@ class Toolbox(
         return ToolOutput("$expr = $shown", "$expr = $shown")
     }
 
-    private fun search(query: String, readTop: Int = 3): ToolOutput {
-        if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
+    private fun search(rawQuery: String, readTop: Int = 3): ToolOutput {
+        if (rawQuery.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
+        // Suchmaschinen verstehen „gestern“ nicht – durch das Datum ersetzen
+        val df = SimpleDateFormat("d. MMMM yyyy", Locale.GERMANY)
+        val day = 24 * 60 * 60 * 1000L
+        val now = System.currentTimeMillis()
+        val query = rawQuery
+            .replace(Regex("\\bvorgestern\\b", RegexOption.IGNORE_CASE), df.format(Date(now - 2 * day)))
+            .replace(Regex("\\bgestern\\b", RegexOption.IGNORE_CASE), df.format(Date(now - day)))
+            .replace(Regex("\\bheute\\b", RegexOption.IGNORE_CASE), df.format(Date(now)))
+            .replace(Regex("\\bmorgen\\b", RegexOption.IGNORE_CASE), df.format(Date(now + day)))
         val results = when {
             searxngUrl().isNotBlank() -> searchSearx(query)
             else -> withFallback({ searchDuckDuckGo(query) }, { searchBing(query) })
