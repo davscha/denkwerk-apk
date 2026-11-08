@@ -130,13 +130,17 @@ class OllamaEngine(private val hostProvider: () -> Pair<String, Int>) : ChatEngi
         }
     }
 
-    override fun send(text: String, imagePath: String?): Flow<String> = flow {
+    /** Ollama nimmt mehrere Bilder pro Nachricht. */
+    override val maxImages: Int get() = if (supportsImages) MAX_IMAGES else 0
+
+    override fun send(text: String, imagePaths: List<String>): Flow<String> = flow {
         val c = client ?: error("Kein Ollama-Modell geladen")
         val userMsg = JSONObject().put("role", "user").put("content", text)
-        if (imagePath != null) {
+        if (imagePaths.isNotEmpty()) {
             check(supportsImages) { "Dieses Modell kann keine Bilder ansehen." }
-            val b64 = Base64.encodeToString(File(imagePath).readBytes(), Base64.NO_WRAP)
-            userMsg.put("images", JSONArray().put(b64))
+            val arr = JSONArray()
+            imagePaths.take(MAX_IMAGES).forEach { p -> arr.put(Base64.encodeToString(File(p).readBytes(), Base64.NO_WRAP)) }
+            userMsg.put("images", arr)
         }
         val body = JSONObject()
             .put("model", model)
@@ -180,7 +184,11 @@ class OllamaEngine(private val hostProvider: () -> Pair<String, Int>) : ChatEngi
             conn.disconnect()
         }
         // Verlauf weiterführen (das Bild nur als Hinweis, damit nicht jedes Mal Megabytes mitgehen)
-        history += JSONObject().put("role", "user").put("content", if (imagePath != null) "[schickt ein Bild] $text" else text)
+        history += JSONObject().put("role", "user").put("content", when (imagePaths.size) {
+            0 -> text
+            1 -> "[schickt ein Bild] $text"
+            else -> "[schickt ${imagePaths.size} Bilder] $text"
+        })
         if (reply.isNotEmpty()) history += JSONObject().put("role", "assistant").put("content", reply.toString())
     }.flowOn(Dispatchers.IO)
 
@@ -196,5 +204,9 @@ class OllamaEngine(private val hostProvider: () -> Pair<String, Int>) : ChatEngi
         model = ""
         history.clear()
         supportsImages = false
+    }
+
+    private companion object {
+        const val MAX_IMAGES = 8
     }
 }

@@ -102,6 +102,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val visionAvailable: Boolean get() = (engineStatus as? EngineStatus.Ready)?.vision == true
 
+    /** Wie viele Bilder das aktive Modell pro Nachricht nimmt (Ollama mehrere, Gerät eins). */
+    val maxImages: Int get() = if (visionAvailable) engine?.maxImages ?: 0 else 0
+
     // ---------- Modelle auf dem Gerät ----------
     var internalModels by mutableStateOf<List<ModelInfo>>(emptyList())
         private set
@@ -207,9 +210,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Nachrichten schicken
     // =====================================================================
 
-    fun send(text: String, imagePath: String?) {
+    fun send(text: String, imagePaths: List<String> = emptyList()) {
         if (generating) return
-        if (text.isBlank() && imagePath == null) return
+        if (text.isBlank() && imagePaths.isEmpty()) return
         if (engineStatus !is EngineStatus.Ready) {
             toast = when (engineStatus) {
                 is EngineStatus.Loading -> "Das Modell lädt noch – einen Moment."
@@ -218,7 +221,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val base = currentChat ?: Chat(title = Chat.titleFrom(text))
-        val userMsg = ChatMessage(fromUser = true, text = text.trim(), imagePath = imagePath)
+        val userMsg = ChatMessage(fromUser = true, text = text.trim(), imagePaths = imagePaths.take(maxImages.coerceAtLeast(1)))
         val history = base.messages
         val chat = base.copy(messages = history + userMsg)
         currentChatId = chat.id
@@ -291,7 +294,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val start = System.currentTimeMillis()
                 var firstChunkAt = 0L
                 var chunks = 0
-                eng.send(prompt, userMsg.imagePath).collect { piece ->
+                eng.send(prompt, userMsg.imagePaths).collect { piece ->
                     if (chunks == 0) firstChunkAt = System.currentTimeMillis()
                     chunks++
                     streamingText += piece
@@ -332,7 +335,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val kept = ArrayDeque<ChatMessage>()
         var used = 0
         for (m in usable.asReversed()) {
-            val t = if (m.imagePath != null) "[Bild] ${m.text}" else m.text
+            val t = if (m.imagePaths.isNotEmpty()) "[Bild] ${m.text}" else m.text
             if (used + t.length > budget && kept.isNotEmpty()) break
             kept.addFirst(m.copy(text = t))
             used += t.length

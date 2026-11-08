@@ -104,13 +104,16 @@ class LiteRtEngine(private val context: Context) : ChatEngine {
         )
     }
 
-    override fun send(text: String, imagePath: String?): Flow<String> = callbackFlow {
+    /** LiteRT-LM auf dem Gerät: ein Bild pro Nachricht (mehr kostet zu viel Grafikspeicher). */
+    override val maxImages: Int get() = if (supportsImages) 1 else 0
+
+    override fun send(text: String, imagePaths: List<String>): Flow<String> = callbackFlow {
         val c = conversation ?: error("Kein Gespräch gestartet")
         // Bild vor dem Text, so erwartet es Gemma
         val parts = buildList {
-            if (imagePath != null) {
+            if (imagePaths.isNotEmpty()) {
                 check(supportsImages) { "Dieses Modell kann gerade keine Bilder ansehen." }
-                add(Content.ImageFile(imagePath))
+                add(Content.ImageFile(imagePaths.first()))
             }
             add(Content.Text(text))
         }

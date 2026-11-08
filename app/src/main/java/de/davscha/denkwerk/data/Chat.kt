@@ -11,8 +11,8 @@ data class ChatMessage(
     val id: String = newId(),
     val fromUser: Boolean,
     val text: String,
-    /** Angehängtes Bild (absoluter Pfad), nur bei deinen Nachrichten */
-    val imagePath: String? = null,
+    /** Angehängte Bilder (absolute Pfade), nur bei deinen Nachrichten */
+    val imagePaths: List<String> = emptyList(),
     /** Welches Modell geantwortet hat, z. B. "Gemma 4 E4B · Gerät" */
     val modelLabel: String = "",
     /** Geschwindigkeit der Antwort (ungefähr Wortstücke pro Sekunde) */
@@ -25,7 +25,7 @@ data class ChatMessage(
         .put("id", id)
         .put("fromUser", fromUser)
         .put("text", text)
-        .put("imagePath", imagePath ?: "")
+        .put("imagePaths", JSONArray(imagePaths))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -36,7 +36,9 @@ data class ChatMessage(
             id = o.optString("id").ifEmpty { newId() },
             fromUser = o.optBoolean("fromUser"),
             text = o.optString("text"),
-            imagePath = o.optString("imagePath").ifEmpty { null },
+            imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
+                // ältere Chats hatten nur ein Bild
+                ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
             modelLabel = o.optString("modelLabel"),
             tokensPerSec = o.optDouble("tokensPerSec", 0.0).toFloat(),
             isError = o.optBoolean("isError"),

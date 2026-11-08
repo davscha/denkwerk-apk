@@ -18,7 +18,7 @@
 - [ ] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
 - [ ] Eigene GPTs / Presets (System-Prompt, Temperatur, Lieblingsmodell)
 - [ ] Prompt-Bibliothek mit `/`-Befehl
-- [ ] Mehrere Bilder pro Nachricht (Ollama)
+- [x] Mehrere Bilder pro Nachricht (Ollama bis 8, Gerät 1)
 - [ ] Dokumente anhängen (PDF/Text) – „Frag dein Dokument“
 - [ ] Memory: Fakten über dich, die in jeden Chat mitgehen
 - [ ] Kontextanzeige (z. B. 3.2k/4k Tokens)

@@ -15,6 +15,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,7 +97,7 @@ import java.io.File
 @Composable
 fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
     var input by remember { mutableStateOf("") }
-    var image by remember { mutableStateOf<String?>(null) }
+    var images by remember { mutableStateOf<List<String>>(emptyList()) }
     var editingId by remember { mutableStateOf<String?>(null) }
     val chat = vm.currentChat
     val messages = chat?.messages.orEmpty()
@@ -110,7 +112,7 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (messages.isEmpty()) {
-                EmptyState(onSuggestion = { text -> vm.send(text, null) })
+                EmptyState(onSuggestion = { text -> vm.send(text) })
             } else {
                 MessageList(
                     vm = vm,
@@ -144,8 +146,8 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
             vm = vm,
             text = input,
             onText = { input = it },
-            image = image,
-            onImage = { image = it },
+            images = images,
+            onImages = { images = it },
             editing = editingId != null,
             onCancelEdit = { editingId = null; input = "" },
             onSend = {
@@ -154,10 +156,10 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
                     vm.editMessage(id, input)
                     editingId = null
                 } else {
-                    vm.send(input, image)
+                    vm.send(input, images)
                 }
                 input = ""
-                image = null
+                images = emptyList()
             },
         )
     }
@@ -384,13 +386,22 @@ private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit) {
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-        m.imagePath?.let { path ->
-            AsyncImage(
-                model = File(path),
-                contentDescription = "Angehängtes Bild",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.padding(bottom = 6.dp).size(180.dp).clip(RoundedCornerShape(14.dp)),
-            )
+        if (m.imagePaths.isNotEmpty()) {
+            // Ein Bild groß, mehrere als waagerecht wischbare Reihe
+            val side = if (m.imagePaths.size == 1) 180.dp else 120.dp
+            Row(
+                Modifier.padding(bottom = 6.dp).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                m.imagePaths.forEach { path ->
+                    AsyncImage(
+                        model = File(path),
+                        contentDescription = "Angehängtes Bild",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(side).clip(RoundedCornerShape(14.dp)),
+                    )
+                }
+            }
         }
         if (m.text.isNotBlank()) {
             Box {
@@ -502,16 +513,26 @@ private fun InputBar(
     vm: AppViewModel,
     text: String,
     onText: (String) -> Unit,
-    image: String?,
-    onImage: (String?) -> Unit,
+    images: List<String>,
+    onImages: (List<String>) -> Unit,
     editing: Boolean,
     onCancelEdit: () -> Unit,
     onSend: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) scope.launch { onImage(vm.importImage(uri)) }
+    val maxImages = vm.maxImages
+    val free = (maxImages - images.size).coerceAtLeast(0)
+    // Gerät: ein Bild (ersetzt das alte) · Ollama: mehrere Bilder auf einmal
+    val pickOne = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch { vm.importImage(uri)?.let { onImages(listOf(it)) } }
+    }
+    val pickMany = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_PICK)) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            val added = uris.take(free).mapNotNull { vm.importImage(it) }
+            onImages(images + added)
+            if (uris.size > free) vm.toast = "Höchstens $maxImages Bilder pro Nachricht."
+        }
     }
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
@@ -539,32 +560,59 @@ private fun InputBar(
                     IconButton(onClick = onCancelEdit, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, "Abbrechen", modifier = Modifier.size(16.dp)) }
                 }
             }
-            image?.let { path ->
-                Box(Modifier.padding(start = 8.dp, top = 6.dp)) {
-                    AsyncImage(
-                        model = File(path),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)),
-                    )
-                    Box(
-                        Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(2.dp)
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.background)
-                            .clickable { onImage(null) },
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Default.Close, "Bild entfernen", modifier = Modifier.size(14.dp)) }
+            if (images.isNotEmpty()) {
+                Row(
+                    Modifier.padding(start = 8.dp, top = 6.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    images.forEach { path ->
+                        Box {
+                            AsyncImage(
+                                model = File(path),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)),
+                            )
+                            Box(
+                                Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(2.dp)
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.background)
+                                    .clickable { onImages(images - path) },
+                                contentAlignment = Alignment.Center,
+                            ) { Icon(Icons.Default.Close, "Bild entfernen", modifier = Modifier.size(14.dp)) }
+                        }
+                    }
+                    // Weiteres Bild hinzufügen, solange Platz ist
+                    if (maxImages > 1 && free > 0) {
+                        Box(
+                            Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                .clickable { pickMany.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Default.Add, "Weiteres Bild") }
+                    }
+                    if (maxImages > 1) {
+                        Text("${images.size}/$maxImages", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
                 // Bild anhängen – nur wenn das Modell Bilder versteht
                 IconButton(
                     onClick = {
-                        if (vision) pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                        else vm.toast = "Dieses Modell versteht keine Bilder."
+                        val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        when {
+                            !vision -> vm.toast = "Dieses Modell versteht keine Bilder."
+                            maxImages <= 1 -> pickOne.launch(request)
+                            free == 0 -> vm.toast = "Höchstens $maxImages Bilder pro Nachricht."
+                            else -> pickMany.launch(request)
+                        }
                     },
                     enabled = !editing,
                 ) {
@@ -587,7 +635,7 @@ private fun InputBar(
                 }
                 when {
                     vm.generating -> RoundButton(Icons.Default.Stop, "Stopp", filled = true) { vm.stop() }
-                    text.isBlank() && image == null -> IconButton(onClick = {
+                    text.isBlank() && images.isEmpty() -> IconButton(onClick = {
                         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
@@ -614,6 +662,9 @@ private fun InputBar(
         }
     }
 }
+
+/** Obergrenze für die Android-Bildauswahl (das Modell begrenzt zusätzlich). */
+private const val MAX_PICK = 8
 
 @Composable
 private fun RoundButton(icon: ImageVector, label: String, filled: Boolean, onClick: () -> Unit) {

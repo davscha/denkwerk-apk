@@ -39,7 +39,7 @@ class ChatStore(private val context: Context) {
     fun delete(chat: Chat) {
         file(chat.id).delete()
         // Bilder, die nur zu diesem Chat gehörten, mit aufräumen
-        chat.messages.mapNotNull { it.imagePath }.forEach { path ->
+        chat.messages.flatMap { it.imagePaths }.forEach { path ->
             File(path).takeIf { it.parentFile == imagesDir }?.delete()
         }
     }
@@ -65,7 +65,7 @@ class ChatStore(private val context: Context) {
         appendLine()
         chat.messages.filter { !it.isError }.forEach { m ->
             appendLine(if (m.fromUser) "**Du:**" else "**Denkwerk** (${m.modelLabel}):")
-            if (m.imagePath != null) appendLine("_[Bild]_")
+            if (m.imagePaths.isNotEmpty()) appendLine("_[${m.imagePaths.size} Bild(er)]_")
             appendLine(m.text)
             appendLine()
         }
