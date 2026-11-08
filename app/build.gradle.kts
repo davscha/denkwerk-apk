@@ -70,6 +70,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
 
     implementation("io.coil-kt:coil-compose:2.7.0")          // Bilder im Chat
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")  // Text aus PDFs lesen
 
     // Gemma 4 auf dem Grafikchip (gleiche Version wie Googles AI Edge Gallery)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.1")

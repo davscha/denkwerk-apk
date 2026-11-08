@@ -47,6 +47,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
@@ -84,6 +86,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -92,6 +96,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import de.davscha.denkwerk.data.ChatMessage
+import de.davscha.denkwerk.data.DocAttachment
 import de.davscha.denkwerk.data.Source
 import de.davscha.denkwerk.engine.Accelerator
 import kotlinx.coroutines.launch
@@ -101,6 +106,7 @@ import java.io.File
 fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
     var input by remember { mutableStateOf("") }
     var images by remember { mutableStateOf<List<String>>(emptyList()) }
+    var docs by remember { mutableStateOf<List<DocAttachment>>(emptyList()) }
     var editingId by remember { mutableStateOf<String?>(null) }
     val chat = vm.currentChat
     val messages = chat?.messages.orEmpty()
@@ -157,6 +163,8 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
             onText = { input = it },
             images = images,
             onImages = { images = it },
+            docs = docs,
+            onDocs = { docs = it },
             editing = editingId != null,
             onCancelEdit = { editingId = null; input = "" },
             onSend = {
@@ -165,10 +173,11 @@ fun ChatScreen(vm: AppViewModel, onMenu: (() -> Unit)?) {
                     vm.editMessage(id, input)
                     editingId = null
                 } else {
-                    vm.send(input, images)
+                    vm.send(input, images, docs)
                 }
                 input = ""
                 images = emptyList()
+                docs = emptyList()
             },
         )
     }
@@ -408,7 +417,7 @@ private fun MessageList(vm: AppViewModel, messages: List<ChatMessage>, onEdit: (
         items(messages, key = { it.id }) { m ->
             Box(Modifier.widthIn(max = 820.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
                 if (m.fromUser) {
-                    UserMessage(m, canEdit = !vm.generating, onEdit = { onEdit(m) })
+                    UserMessage(m, canEdit = !vm.generating, onEdit = { onEdit(m) }, onSavePrompt = { vm.promptFromMessage(m.text) })
                 } else {
                     AssistantMessage(vm, m, isLast = m.id == lastAnswerId)
                 }
@@ -419,7 +428,7 @@ private fun MessageList(vm: AppViewModel, messages: List<ChatMessage>, onEdit: (
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit) {
+private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit, onSavePrompt: () -> Unit) {
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
@@ -440,6 +449,12 @@ private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit) {
                 }
             }
         }
+        if (m.documents.isNotEmpty()) {
+            Row(
+                Modifier.padding(bottom = 6.dp).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) { m.documents.forEach { d -> DocChip(d, onRemove = null) } }
+        }
         if (m.text.isNotBlank()) {
             Box {
                 Text(
@@ -458,6 +473,11 @@ private fun UserMessage(m: ChatMessage, canEdit: Boolean, onEdit: () -> Unit) {
                         text = { Text("Kopieren") },
                         leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
                         onClick = { menu = false; copyToClipboard(context, m.text) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Als Prompt speichern") },
+                        leadingIcon = { Icon(Icons.Default.Bookmarks, null) },
+                        onClick = { menu = false; onSavePrompt() },
                     )
                     if (canEdit) {
                         DropdownMenuItem(
@@ -563,14 +583,18 @@ private fun InputBar(
     onText: (String) -> Unit,
     images: List<String>,
     onImages: (List<String>) -> Unit,
+    docs: List<DocAttachment>,
+    onDocs: (List<DocAttachment>) -> Unit,
     editing: Boolean,
     onCancelEdit: () -> Unit,
     onSend: () -> Unit,
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val maxImages = vm.maxImages
     val free = (maxImages - images.size).coerceAtLeast(0)
+    var attachMenu by remember { mutableStateOf(false) }
+    var readingDoc by remember { mutableStateOf(false) }
+
     // Gerät: ein Bild (ersetzt das alte) · Ollama: mehrere Bilder auf einmal
     val pickOne = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch { vm.importImage(uri)?.let { onImages(listOf(it)) } }
@@ -582,16 +606,77 @@ private fun InputBar(
             if (uris.size > free) vm.toast = "Höchstens $maxImages Bilder pro Nachricht."
         }
     }
+    // Dokumente: Text, Code, Markdown, CSV, JSON, PDF, Word
+    val pickDocs = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) scope.launch {
+            readingDoc = true
+            val added = uris.take(MAX_DOCS - docs.size).mapNotNull { vm.importDocument(it) }
+            readingDoc = false
+            onDocs(docs + added)
+            if (uris.size > MAX_DOCS - docs.size) vm.toast = "Höchstens $MAX_DOCS Dokumente pro Nachricht."
+        }
+    }
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val spoken = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
         if (!spoken.isNullOrBlank()) onText(if (text.isBlank()) spoken else "$text $spoken")
     }
     val vision = vm.visionAvailable
+    fun pickImages() {
+        val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        when {
+            !vision -> vm.toast = "Dieses Modell versteht keine Bilder."
+            maxImages <= 1 -> pickOne.launch(request)
+            free == 0 -> vm.toast = "Höchstens $maxImages Bilder pro Nachricht."
+            else -> pickMany.launch(request)
+        }
+    }
+
+    // Prompt-Bibliothek: "/" am Anfang zeigt passende Prompts
+    val slashQuery = if (text.startsWith("/") && !text.contains(' ') && !text.contains('\n')) text.drop(1).lowercase() else null
+    val slashHits = slashQuery?.let { q -> vm.prompts.filter { it.title.contains(q) || it.text.lowercase().contains(q) }.take(6) }
+
+    // Cursor bleibt beim Tippen, springt aber ans Ende, wenn der Text von außen kommt (Prompt, Sprache …)
+    var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    val shown = if (field.text == text) field else TextFieldValue(text, TextRange(text.length))
 
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (slashHits != null) {
+            Column(
+                Modifier
+                    .widthIn(max = 820.dp)
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                    .padding(vertical = 6.dp),
+            ) {
+                if (slashHits.isEmpty()) {
+                    Text("Kein Prompt gefunden", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+                }
+                slashHits.forEach { p ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onText(p.text) }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    ) {
+                        Text("/${p.title}", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Mint)
+                        Text(p.text.replace('\n', ' ').trim(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Text(
+                    "Bibliothek verwalten …",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().clickable { onText(""); vm.openPrompts() }.padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+
         Column(
             Modifier
                 .widthIn(max = 820.dp)
@@ -606,6 +691,19 @@ private fun InputBar(
                     Spacer(Modifier.width(6.dp))
                     Text("Nachricht bearbeiten – danach antwortet die KI neu", fontSize = 12.sp, color = Mint, modifier = Modifier.weight(1f))
                     IconButton(onClick = onCancelEdit, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, "Abbrechen", modifier = Modifier.size(16.dp)) }
+                }
+            }
+            if (docs.isNotEmpty() || readingDoc) {
+                Row(
+                    Modifier.padding(start = 8.dp, top = 6.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    docs.forEach { d -> DocChip(d, onRemove = { onDocs(docs - d) }) }
+                    if (readingDoc) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp), color = Mint)
+                        Text("Lese Dokument …", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (images.isNotEmpty()) {
@@ -641,7 +739,7 @@ private fun InputBar(
                                 .size(64.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
-                                .clickable { pickMany.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                .clickable { pickImages() },
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Add, "Weiteres Bild") }
                     }
@@ -651,30 +749,57 @@ private fun InputBar(
                 }
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                // Bild anhängen – nur wenn das Modell Bilder versteht
-                IconButton(
-                    onClick = {
-                        val request = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        when {
-                            !vision -> vm.toast = "Dieses Modell versteht keine Bilder."
-                            maxImages <= 1 -> pickOne.launch(request)
-                            free == 0 -> vm.toast = "Höchstens $maxImages Bilder pro Nachricht."
-                            else -> pickMany.launch(request)
-                        }
-                    },
-                    enabled = !editing,
-                ) {
-                    Icon(
-                        if (vision) Icons.Default.Image else Icons.Default.Add,
-                        "Bild anhängen",
-                        tint = if (vision) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    )
+                // "+" – Bild oder Dokument anhängen
+                Box {
+                    IconButton(onClick = { attachMenu = true }, enabled = !editing) { Icon(Icons.Default.Add, "Anhängen") }
+                    DropdownMenu(expanded = attachMenu, onDismissRequest = { attachMenu = false }) {
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("Bild")
+                                    Text(
+                                        when {
+                                            !vision -> "Modell versteht keine Bilder"
+                                            maxImages > 1 -> "bis zu $maxImages Bilder"
+                                            else -> "ein Bild"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Default.Image, null, tint = if (vision) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)) },
+                            onClick = { attachMenu = false; pickImages() },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text("Dokument")
+                                    Text("PDF, Word, Text, Code, CSV …", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            },
+                            leadingIcon = { Icon(Icons.Default.Description, null) },
+                            onClick = {
+                                attachMenu = false
+                                if (docs.size >= MAX_DOCS) vm.toast = "Höchstens $MAX_DOCS Dokumente pro Nachricht."
+                                else pickDocs.launch(arrayOf("*/*"))
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Prompt-Bibliothek") },
+                            leadingIcon = { Icon(Icons.Default.Bookmarks, null) },
+                            onClick = { attachMenu = false; onText("/") },
+                        )
+                    }
                 }
                 Box(Modifier.weight(1f).padding(vertical = 12.dp, horizontal = 2.dp)) {
-                    if (text.isEmpty()) Text("Frag Denkwerk …", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                    if (text.isEmpty()) Text("Frag Denkwerk … ( / für Prompts)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
                     BasicTextField(
-                        value = text,
-                        onValueChange = onText,
+                        value = shown,
+                        onValueChange = { v ->
+                            field = v
+                            if (v.text != text) onText(v.text)
+                        },
                         textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
                         cursorBrush = SolidColor(Mint),
                         maxLines = 8,
@@ -683,7 +808,7 @@ private fun InputBar(
                 }
                 when {
                     vm.generating -> RoundButton(Icons.Default.Stop, "Stopp", filled = true) { vm.stop() }
-                    text.isBlank() && images.isEmpty() -> IconButton(onClick = {
+                    text.isBlank() && images.isEmpty() && docs.isEmpty() -> IconButton(onClick = {
                         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                             .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
@@ -710,6 +835,35 @@ private fun InputBar(
         }
     }
 }
+
+/** Kärtchen für ein angehängtes Dokument: Name und Länge, optional mit ✕ */
+@Composable
+private fun DocChip(d: DocAttachment, onRemove: (() -> Unit)?) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(start = 10.dp, end = if (onRemove != null) 4.dp else 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.Description, null, tint = Mint, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(6.dp))
+        Column {
+            Text(d.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+            Text(
+                if (d.chars >= 1000) "${d.chars / 1000}k Zeichen" else "${d.chars} Zeichen",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (onRemove != null) {
+            IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, "Entfernen", modifier = Modifier.size(14.dp)) }
+        }
+    }
+}
+
+/** Höchstens so viele Dokumente pro Nachricht */
+private const val MAX_DOCS = 5
 
 /** Obergrenze für die Android-Bildauswahl (das Modell begrenzt zusätzlich). */
 private const val MAX_PICK = 8

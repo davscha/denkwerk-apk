@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Environment
+import android.provider.OpenableColumns
 import de.davscha.denkwerk.model.hasSharedStorage
 import org.json.JSONObject
 import java.io.File
@@ -19,6 +20,7 @@ class ChatStore(private val context: Context) {
     val dataDir: File get() = (if (hasSharedStorage()) sharedDir else context.filesDir).apply { mkdirs() }
     private val chatsDir get() = File(dataDir, "Chats").apply { mkdirs() }
     private val imagesDir get() = File(chatsDir, "Bilder").apply { mkdirs() }
+    private val docsDir get() = File(chatsDir, "Dokumente").apply { mkdirs() }
 
     private fun file(id: String) = File(chatsDir, "chat-$id.json")
 
@@ -42,6 +44,9 @@ class ChatStore(private val context: Context) {
         chat.messages.flatMap { it.imagePaths }.forEach { path ->
             File(path).takeIf { it.parentFile == imagesDir }?.delete()
         }
+        chat.messages.flatMap { it.documents }.forEach { d ->
+            File(d.textPath).takeIf { it.parentFile == docsDir }?.delete()
+        }
     }
 
     /** Ein Bild als verkleinertes JPEG (max. 1024 px) in Chats/Bilder ablegen. Gibt den Pfad zurück. */
@@ -58,6 +63,51 @@ class ChatStore(private val context: Context) {
         f.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 90, it) }
         f.absolutePath
     }.getOrNull()
+
+    // ---------- Dokumente ----------
+
+    /**
+     * Liest ein Dokument aus (Text, Code, Markdown, CSV, JSON, PDF, Word) und legt den Text
+     * als .txt in Chats/Dokumente ab. Wirft einen Fehler mit verständlicher Meldung.
+     */
+    fun importDocument(uri: Uri): DocAttachment {
+        val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "dokument"
+        val mime = context.contentResolver.getType(uri).orEmpty()
+        val lower = name.lowercase()
+        val text = when {
+            mime == "application/pdf" || lower.endsWith(".pdf") -> DocReader.pdf(context, uri)
+            lower.endsWith(".docx") || mime.contains("wordprocessingml") -> DocReader.docx(context, uri)
+            else -> DocReader.plain(context, uri)
+        }.replace("\r\n", "\n").replace(Regex("\n{3,}"), "\n\n").trim()
+        if (text.isBlank()) error("In „$name“ wurde kein Text gefunden (eingescannte PDFs gehen nicht).")
+        val f = File(docsDir, "doc-${System.currentTimeMillis()}.txt")
+        f.writeText(text)
+        return DocAttachment(name, f.absolutePath, text.length)
+    }
+
+    // ---------- Prompt-Bibliothek ----------
+
+    private val promptsFile get() = File(dataDir, "prompts.json")
+
+    fun loadPrompts(): List<SavedPrompt> {
+        val f = promptsFile
+        if (!f.exists()) {
+            savePrompts(SavedPrompt.samples)
+            return SavedPrompt.samples
+        }
+        return runCatching {
+            val arr = JSONObject(f.readText()).getJSONArray("prompts")
+            List(arr.length()) { SavedPrompt.fromJson(arr.getJSONObject(it)) }
+        }.getOrElse { SavedPrompt.samples }
+    }
+
+    fun savePrompts(prompts: List<SavedPrompt>) {
+        val json = JSONObject().put("version", 1).put("prompts", org.json.JSONArray(prompts.map { it.toJson() }))
+        val tmp = File(dataDir, "prompts.json.tmp")
+        tmp.writeText(json.toString(2))
+        tmp.renameTo(promptsFile)
+    }
 
     // ---------- Assistenten (Presets) ----------
 

@@ -14,6 +14,8 @@ import de.davscha.denkwerk.data.Chat
 import de.davscha.denkwerk.data.ChatMessage
 import de.davscha.denkwerk.data.ChatStore
 import de.davscha.denkwerk.data.Preset
+import de.davscha.denkwerk.data.DocAttachment
+import de.davscha.denkwerk.data.SavedPrompt
 import de.davscha.denkwerk.data.Variant
 import de.davscha.denkwerk.data.Settings
 import de.davscha.denkwerk.data.Source
@@ -37,7 +39,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-enum class Screen { Chat, Settings, Presets }
+enum class Screen { Chat, Settings, Presets, Prompts }
 
 /** Zustand des Sprachmodells, das gerade benutzt wird. */
 sealed interface EngineStatus {
@@ -81,6 +83,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openSettings() { screen = Screen.Settings }
     fun openPresets() { editingPreset = null; screen = Screen.Presets }
+    fun openPrompts() { screen = Screen.Prompts }
+
+    // ---------- Prompt-Bibliothek ----------
+    val prompts = mutableStateListOf<SavedPrompt>()
+    /** Prompt im Bearbeiten-Dialog (neu oder vorhanden) */
+    var editingPrompt by mutableStateOf<SavedPrompt?>(null)
+
+    fun savePrompt(p: SavedPrompt) {
+        val clean = p.copy(title = SavedPrompt.slug(p.title.ifBlank { p.text }))
+        val i = prompts.indexOfFirst { it.id == clean.id }
+        if (i >= 0) prompts[i] = clean else prompts.add(clean)
+        editingPrompt = null
+        val copy = prompts.toList()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { store.savePrompts(copy) } }
+    }
+
+    fun deletePrompt(id: String) {
+        prompts.removeAll { it.id == id }
+        editingPrompt = null
+        val copy = prompts.toList()
+        viewModelScope.launch(Dispatchers.IO) { runCatching { store.savePrompts(copy) } }
+    }
+
+    /** Eigene Nachricht als Prompt speichern (öffnet die Bibliothek mit Dialog) */
+    fun promptFromMessage(text: String) {
+        editingPrompt = SavedPrompt(title = SavedPrompt.slug(text), text = text)
+        screen = Screen.Prompts
+    }
     fun back() {
         if (screen == Screen.Presets && editingPreset != null) editingPreset = null else screen = Screen.Chat
     }
@@ -169,6 +199,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val p = withContext(Dispatchers.IO) { store.loadPresets() }
             presets.clear()
             presets.addAll(p)
+            val pr = withContext(Dispatchers.IO) { store.loadPrompts() }
+            prompts.clear()
+            prompts.addAll(pr)
         }
         if (settings.ollamaHost.isNotBlank()) testOllama(silent = true)
         loadActiveModel()
@@ -333,9 +366,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Nachrichten schicken
     // =====================================================================
 
-    fun send(text: String, imagePaths: List<String> = emptyList()) {
+    fun send(text: String, imagePaths: List<String> = emptyList(), documents: List<DocAttachment> = emptyList()) {
         if (generating) return
-        if (text.isBlank() && imagePaths.isEmpty()) return
+        if (text.isBlank() && imagePaths.isEmpty() && documents.isEmpty()) return
         if (engineStatus !is EngineStatus.Ready) {
             toast = when (engineStatus) {
                 is EngineStatus.Loading -> "Das Modell lädt noch – einen Moment."
@@ -343,8 +376,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             return
         }
-        val base = currentChat ?: Chat(title = Chat.titleFrom(text), presetId = pendingPresetId)
-        val userMsg = ChatMessage(fromUser = true, text = text.trim(), imagePaths = imagePaths.take(maxImages.coerceAtLeast(1)))
+        val base = currentChat ?: Chat(
+            title = if (text.isBlank() && documents.isNotEmpty()) documents.first().name else Chat.titleFrom(text),
+            presetId = pendingPresetId,
+        )
+        val userMsg = ChatMessage(fromUser = true, text = text.trim(), imagePaths = imagePaths.take(maxImages.coerceAtLeast(1)), documents = documents)
         val history = base.messages
         val chat = base.copy(messages = history + userMsg)
         currentChatId = chat.id
@@ -446,7 +482,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 engineSyncKey = null // stimmt erst wieder, wenn die Antwort vollständig ist
-                val prompt = userMsg.text.ifBlank { "Beschreibe dieses Bild." }
+                val prompt = withContext(Dispatchers.IO) { fullPrompt(userMsg) }
                 val start = System.currentTimeMillis()
                 var firstChunkAt = 0L
                 var chunks = 0
@@ -523,14 +559,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return text
     }
 
+    /** Wie viele Zeichen eines Dokuments mitgeschickt werden (passend zum Kontext des Modells). */
+    private fun docBudget(): Int =
+        if (settings.source == Source.OLLAMA) ((settings.ollamaContext * 2.5).toInt() - 3000).coerceAtLeast(4000) else 6_000
+
+    /** Deine Nachricht samt angehängter Dokumente, so wie sie ans Modell geht. */
+    private fun fullPrompt(m: ChatMessage): String {
+        val text = m.text.ifBlank {
+            when {
+                m.documents.isNotEmpty() -> "Fasse das Dokument kurz zusammen."
+                m.imagePaths.size > 1 -> "Beschreibe diese Bilder."
+                else -> "Beschreibe dieses Bild."
+            }
+        }
+        if (m.documents.isEmpty()) return text
+        val each = docBudget() / m.documents.size
+        return buildString {
+            m.documents.forEach { d ->
+                val content = runCatching { java.io.File(d.textPath).readText() }.getOrDefault("(Datei nicht mehr vorhanden)")
+                append("[Dokument: ${d.name}]\n")
+                if (content.length > each) {
+                    append(content.take(each))
+                    append("\n[… gekürzt: erste $each von ${content.length} Zeichen]\n\n")
+                } else {
+                    append(content)
+                    append("\n\n")
+                }
+            }
+            append(text)
+        }
+    }
+
+    suspend fun importDocument(uri: Uri): DocAttachment? {
+        val r = withContext(Dispatchers.IO) { runCatching { store.importDocument(uri) } }
+        r.exceptionOrNull()?.let { toast = it.message ?: "Dokument konnte nicht gelesen werden" }
+        return r.getOrNull()
+    }
+
     /** Lange Chats kürzen, damit sie ins Kontextfenster passen (neueste Nachrichten bleiben). */
     private fun trimHistory(history: List<ChatMessage>): List<Pair<Boolean, String>> {
-        val budget = if (settings.source == Source.OLLAMA) 24_000 else 7_000
-        val usable = history.filter { !it.isError && it.text.isNotBlank() }
+        val budget = if (settings.source == Source.OLLAMA) (settings.ollamaContext * 2.5).toInt() else 9_000
+        val usable = history.filter { !it.isError && (it.text.isNotBlank() || it.documents.isNotEmpty()) }
         val kept = ArrayDeque<ChatMessage>()
         var used = 0
         for (m in usable.asReversed()) {
-            val t = if (m.imagePaths.isNotEmpty()) "[Bild] ${m.text}" else m.text
+            val t = if (m.fromUser) {
+                val p = fullPrompt(m)
+                if (m.imagePaths.isNotEmpty()) "[Bild] $p" else p
+            } else m.text
             if (used + t.length > budget && kept.isNotEmpty()) break
             kept.addFirst(m.copy(text = t))
             used += t.length

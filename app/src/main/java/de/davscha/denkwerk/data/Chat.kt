@@ -6,6 +6,15 @@ import java.util.UUID
 
 fun newId(): String = UUID.randomUUID().toString().take(12)
 
+/** Ein angehängtes Dokument – der ausgelesene Text liegt als .txt in Chats/Dokumente. */
+data class DocAttachment(val name: String, val textPath: String, val chars: Int) {
+    fun toJson(): JSONObject = JSONObject().put("name", name).put("textPath", textPath).put("chars", chars)
+
+    companion object {
+        fun fromJson(o: JSONObject) = DocAttachment(o.optString("name"), o.optString("textPath"), o.optInt("chars"))
+    }
+}
+
 /** Eine Fassung einer KI-Antwort – bei „Neu erzeugen“ bleiben alle Fassungen erhalten (‹ 1/3 ›). */
 data class Variant(val text: String, val modelLabel: String, val tokensPerSec: Float, val isError: Boolean) {
     fun toJson(): JSONObject = JSONObject()
@@ -25,6 +34,8 @@ data class ChatMessage(
     val text: String,
     /** Angehängte Bilder (absolute Pfade), nur bei deinen Nachrichten */
     val imagePaths: List<String> = emptyList(),
+    /** Angehängte Dokumente (nur bei deinen Nachrichten) */
+    val documents: List<DocAttachment> = emptyList(),
     /** Welches Modell geantwortet hat, z. B. "Gemma 4 E4B · Gerät" */
     val modelLabel: String = "",
     /** Geschwindigkeit der Antwort (ungefähr Wortstücke pro Sekunde) */
@@ -50,6 +61,7 @@ data class ChatMessage(
         .put("fromUser", fromUser)
         .put("text", text)
         .put("imagePaths", JSONArray(imagePaths))
+        .put("documents", JSONArray(documents.map { it.toJson() }))
         .put("modelLabel", modelLabel)
         .put("tokensPerSec", tokensPerSec.toDouble())
         .put("isError", isError)
@@ -65,6 +77,7 @@ data class ChatMessage(
             imagePaths = o.optJSONArray("imagePaths")?.let { a -> List(a.length()) { a.getString(it) } }
                 // ältere Chats hatten nur ein Bild
                 ?: listOfNotNull(o.optString("imagePath").ifEmpty { null }),
+            documents = o.optJSONArray("documents")?.let { a -> List(a.length()) { DocAttachment.fromJson(a.getJSONObject(it)) } }.orEmpty(),
             modelLabel = o.optString("modelLabel"),
             tokensPerSec = o.optDouble("tokensPerSec", 0.0).toFloat(),
             isError = o.optBoolean("isError"),

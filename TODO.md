@@ -20,9 +20,9 @@
 - [x] Assistenten mit KI-Hilfe erstellen (Stichpunkte → fertige Anweisung)
 - [x] Schleifen-Schutz: Wiederholungen erkennen und stoppen, Ollama-Kontext wählbar (4k–32k)
 - [ ] Assistenten teilen (Export/Import als Datei)
-- [ ] Prompt-Bibliothek mit `/`-Befehl
+- [x] Prompt-Bibliothek mit `/`-Befehl
 - [x] Mehrere Bilder pro Nachricht (Ollama bis 8, Gerät 1)
-- [ ] Dokumente anhängen (PDF/Text) – „Frag dein Dokument“
+- [x] Dokumente anhängen (PDF, Word, Text, Code, CSV) – „Frag dein Dokument“
 - [ ] Memory: Fakten über dich, die in jeden Chat mitgehen
 - [ ] Kontextanzeige (z. B. 3.2k/4k Tokens)
 - [ ] Export als PDF, Backup/Wiederherstellen als JSON
