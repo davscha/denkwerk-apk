@@ -757,7 +757,8 @@ class Toolbox(
             append("\n${r.similar.size} ähnliche Bilder gefunden. Die Bilder werden dem Nutzer bereits als Galerie angezeigt – nicht als Links auflisten.\n")
             append("Nenne die wahrscheinlichste Quelle (frühester/offiziellster Fundort) und was das Bild zeigt.")
         }
-        return ToolOutput(forModel, "${r.sites.size} Seiten · ${r.similar.size} ähnliche", webImages = gallery)
+        val sources = r.sites.take(5).map { de.davscha.denkwerk.data.SourceLink(it.title, it.url) }
+        return ToolOutput(forModel, "${r.sites.size} Seiten · ${r.similar.size} ähnliche", webImages = gallery, sources = sources)
     }
 
     private fun sauceNao(arg: String): ToolOutput {
