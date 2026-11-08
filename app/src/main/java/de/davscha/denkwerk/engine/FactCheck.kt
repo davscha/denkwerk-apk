@@ -14,6 +14,8 @@ object FactCheck {
         "sie", "in", "an", "über", "unter", "seit", "bis", "gegen", "beim", "kurz", "quelle", "quellen", "the", "and", "of",
         "januar", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember",
         "montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag", "zusammenfassung", "details", "weiteren",
+        "ihre", "ihr", "ihren", "ihrem", "ihrer", "diese", "dieser", "dieses", "diesen", "meine", "mein", "unsere", "unser", "deine", "dein",
+        "alle", "viele", "einige", "bitte", "hallo", "gern", "gerne", "sehr", "neue", "neuen", "basierend",
     )
 
     /** Namen (2+ großgeschriebene Wörter) und Zahlen-Details (Ergebnisse, Minuten, Uhrzeiten, große Zahlen) */

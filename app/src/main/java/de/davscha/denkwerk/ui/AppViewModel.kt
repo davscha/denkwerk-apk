@@ -283,6 +283,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun looksLikeQuestion(text: String): Boolean {
         val t = text.trim().lowercase()
         if (t.length < 8) return false
+        // Uhrzeit/Datum weiß die App selbst – eine Websuche liefert nur veraltete Uhrzeiten von Webseiten
+        if (isTimeQuestion(t)) return false
         if (Regex("^(danke|ok|okay|super|cool|gut|na gut|alles klar|prima|ja|nein|hallo|hi|tschüss)\\b").containsMatchIn(t) && t.length < 30) return false
         // Aufgaben, die keine Fakten brauchen
         if (Regex("^(schreib|formulier|übersetz|korrigier|verbesser|mach (mir )?(einen|eine) (prompt|gedicht|text))").containsMatchIn(t)) return false
@@ -290,6 +292,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Regex("^(wer|was|wann|wo|wie|warum|wieso|weshalb|welche[rsmn]?|gibt es|ist|sind|kann|hat|haben|stimmt|erklär|kennst du|weißt du|such" +
                 "|who|what|when|where|why|how|which|is|are|was|were|did|does|do|can|has|have|tell me|search|find)\\b").containsMatchIn(t)
     }
+
+    private fun isTimeQuestion(t: String) = Regex(
+        "^(wie spät|wieviel uhr|wie viel uhr|welche uhrzeit|welcher tag|welches datum|was für ein tag|den wievielten|der wievielte|" +
+            "what time|what day|what's the date|what is the date)|^(uhrzeit|datum)\\??$",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(t.trim())
 
     /** Suchanfrage aus der Nachricht machen: Höflichkeitsfloskeln und „such im Internet“ weg */
     private fun searchQueryFrom(text: String): String =
@@ -857,7 +865,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (basePrompt, temperature) = promptFor(chats.firstOrNull { it.id == chatId })
         val useTools = toolsActive && eng is OllamaEngine
         val withMemory = basePrompt + memoryBlock()
-        val today = java.text.SimpleDateFormat("EEEE, d. MMMM yyyy", java.util.Locale.GERMANY).format(java.util.Date())
+        val today = java.text.SimpleDateFormat("EEEE, d. MMMM yyyy, 'es ist' HH:mm 'Uhr'", java.util.Locale.GERMANY).format(java.util.Date())
         val systemPrompt = if (useTools) {
             withMemory + "\n\n" + TOOL_HINT + " Heute ist $today. Schreibe in Suchanfragen statt „gestern“, „heute“ oder „letzte Woche“ " +
                 "immer das konkrete Datum (z. B. „7. November 2026“)."
