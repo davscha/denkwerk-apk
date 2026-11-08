@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Denkwerk: Sprechblase mit Funken (Idee) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#5EE6B4"
+        android:pathData="M34,30h40a8,8 0,0 1,8 8v24a8,8 0,0 1,-8 8H52l-12,10v-10h-6a8,8 0,0 1,-8 -8V38a8,8 0,0 1,8 -8z" />
+    <path
+        android:fillColor="#131315"
+        android:pathData="M54,36l3.5,9.5l9.5,3.5l-9.5,3.5l-3.5,9.5l-3.5,-9.5l-9.5,-3.5l9.5,-3.5z" />
+</vector>

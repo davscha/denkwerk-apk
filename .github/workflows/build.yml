@@ -1,0 +1,56 @@
+name: APK bauen
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: APK bauen
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace 2>&1 | tee build.log
+
+      # Bei Fehlern die Compiler-Meldungen als Hinweise anzeigen (sichtbar direkt im Actions-Tab)
+      - name: Fehler anzeigen
+        if: failure()
+        run: |
+          grep -E "^e: |error:|What went wrong" -A2 build.log | head -60 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done
+
+      - name: APK umbenennen
+        run: cp app/build/outputs/apk/debug/app-debug.apk Denkwerk.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Denkwerk
+          path: Denkwerk.apk
+
+      # Immer der neueste Build unter "Releases → latest", direkt vom Tablet ladbar
+      - name: Release aktualisieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest Denkwerk.apk \
+            --title "Denkwerk – Build ${{ github.run_number }}" \
+            --notes "Automatisch gebaut aus ${{ github.sha }}" \
+            --target ${{ github.sha }}
