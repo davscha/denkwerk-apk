@@ -928,6 +928,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }.collect { ev ->
                         when (ev) {
                             is ToolStreamEvent.Text -> onText(ev.text)
+                            is ToolStreamEvent.Thinking -> streamingThinking = (streamingThinking + ev.text).takeLast(4000)
                             is ToolStreamEvent.RemoveText -> {
                                 val at = streamingText.indexOf(ev.text)
                                 if (at >= 0) streamingText = streamingText.removeRange(at, at + ev.text.length).trimEnd() + "\n\n"
