@@ -43,6 +43,8 @@ class Toolbox(
     private val allowedDirs: () -> List<File> = { emptyList() },
     /** SauceNAO-Schlüssel, leer = Werkzeug nicht anbieten */
     private val sauceNaoKey: () -> String = { "" },
+    /** Videosuche-Filter: YouTube zeigen, soziale Medien zeigen, eigene Sperrliste */
+    private val videoFilter: () -> Triple<Boolean, Boolean, String> = { Triple(true, true, "") },
 ) {
 
     /** Die Werkzeugliste im Format, das Ollama erwartet. */
@@ -108,9 +110,17 @@ class Toolbox(
         put(
             spec(
                 "videos_suchen",
-                "Sucht Videos im Internet (vor allem YouTube). Die Videos werden dem Nutzer automatisch als Kärtchen mit Vorschaubild angezeigt.",
+                "Sucht Videos. Die Videos werden dem Nutzer automatisch als Kärtchen angezeigt. Quellen: " +
+                    "web = allgemeine Videosuche (YouTube, Vimeo, Nachrichtenseiten …), mediathek = ARD/ZDF/arte/3sat & Co. (Dokus, Reportagen, Nachrichten, Serien), " +
+                    "archiv = Internet Archive (alte Filme, Dokus, TV-Mitschnitte, gemeinfreie Filme), peertube = freie Videoplattformen, " +
+                    "vimeo, dailymotion. Will der Nutzer etwas ohne YouTube oder ohne soziale Medien, setze ohne_youtube bzw. ohne_social.",
                 JSONObject()
                     .put("anfrage", JSONObject().put("type", "string").put("description", "Suchbegriffe"))
+                    .put("quelle", JSONObject().put("type", "string")
+                        .put("enum", JSONArray(listOf("web", "mediathek", "archiv", "peertube", "vimeo", "dailymotion")))
+                        .put("description", "Wo gesucht wird (Standard web)"))
+                    .put("ohne_youtube", JSONObject().put("type", "boolean").put("description", "true = keine YouTube-Treffer"))
+                    .put("ohne_social", JSONObject().put("type", "boolean").put("description", "true = keine TikTok/Instagram/Facebook/X/Reddit-Treffer"))
                     .put("anzahl", JSONObject().put("type", "integer").put("description", "Wie viele Videos (1 bis 10, Standard 5)"))
                     .put("dauer", JSONObject().put("type", "string").put("enum", JSONArray(listOf("egal", "kurz", "mittel", "lang")))
                         .put("description", "kurz = unter 4 Min., mittel = 4–20 Min., lang = über 20 Min."))
@@ -205,6 +215,9 @@ class Toolbox(
             args.optInt("anzahl", 5).coerceIn(1, 10),
             args.optString("dauer"),
             args.optBoolean("neueste", false) || args.optString("neueste") == "true",
+            args.optString("quelle").ifBlank { "web" },
+            args.optBoolean("ohne_youtube", false) || args.optString("ohne_youtube") == "true",
+            args.optBoolean("ohne_social", false) || args.optString("ohne_social") == "true",
         )
         "video_verstehen" -> videoTranscript(args.optString("url"))
         "bild_rueckwaertssuche" -> reverseSearch(args.optString("bild"))
@@ -644,21 +657,177 @@ class Toolbox(
 
     // ---------- Videosuche ----------
 
-    private fun searchVideos(query: String, count: Int, duration: String, newest: Boolean): ToolOutput {
+    private val socialDomains = listOf(
+        "tiktok.com", "instagram.com", "facebook.com", "fb.watch", "x.com", "twitter.com", "reddit.com",
+        "pinterest.", "snapchat.com", "threads.net", "linkedin.com", "vk.com", "kwai", "likee",
+    )
+
+    private fun searchVideos(
+        query: String, count: Int, duration: String, newest: Boolean,
+        source: String, noYoutube: Boolean, noSocial: Boolean,
+    ): ToolOutput {
         if (query.isBlank()) return ToolOutput("Leere Suchanfrage", "leere Anfrage", ok = false)
-        var found = if (searxngUrl().isNotBlank()) searchVideosSearx(query) else searchVideosDdg(query, duration, newest)
+        val (showYt, showSocial, blockedRaw) = videoFilter()
+        val hideYt = noYoutube || !showYt
+        val hideSocial = noSocial || !showSocial
+        val blocked = blockedRaw.split(',', '\n', ' ', ';').map { it.trim().lowercase().removePrefix("www.") }.filter { it.isNotEmpty() }
+        val excluded = buildList {
+            if (hideYt) { add("youtube.com"); add("youtu.be") }
+            if (hideSocial) addAll(socialDomains)
+            addAll(blocked)
+        }
+        fun allowed(v: de.davscha.denkwerk.data.WebVideo): Boolean {
+            val host = runCatching { URL(v.url).host.lowercase().removePrefix("www.").removePrefix("m.") }.getOrDefault("")
+            return excluded.none { e -> host == e || host.endsWith(".$e") || (e.endsWith(".") && host.contains(e)) || (!e.contains('.') && host.contains(e)) }
+        }
+        // Bei Filtern der Suche gleich sagen, was raus soll – sonst bleiben nach dem Aussortieren zu wenige übrig
+        val minus = excluded.filter { it.contains('.') && !it.endsWith(".") }.take(10).joinToString(" ") { "-site:$it" }
+
+        var found = when (source) {
+            "mediathek" -> searchMediathek(query, newest)
+            "archiv" -> searchArchive(query)
+            "peertube" -> searchPeerTube(query, newest)
+            "vimeo" -> searchVideosDdg("$query site:vimeo.com", duration, newest)
+            "dailymotion" -> searchVideosDdg("$query site:dailymotion.com", duration, newest)
+            else -> if (searxngUrl().isNotBlank()) searchVideosSearx(query) else searchVideosDdg("$query $minus".trim(), duration, newest)
+        }
+        val before = found.size
+        found = found.filter { allowed(it) }
+        val removed = before - found.size
         if (newest) found = found.sortedByDescending { it.published }
         found = found.take(count)
-        if (found.isEmpty()) return ToolOutput("Keine Videos für „$query“ gefunden.", "„$query“ · keine Videos")
+        if (found.isEmpty()) {
+            return ToolOutput(
+                "Keine Videos für „$query“ in der Quelle „$source“ gefunden" + (if (removed > 0) " ($removed durch Filter ausgeblendet)." else ".") +
+                    " Probiere eine andere Quelle (mediathek, archiv, peertube, vimeo).",
+                "„$query“ · keine Videos",
+            )
+        }
         val list = found.mapIndexed { i, v ->
             "${i + 1}. ${v.title} – ${v.publisher}, ${v.duration}${if (v.published.isNotBlank()) ", ${v.published}" else ""} – ${v.url}"
         }.joinToString("\n")
         return ToolOutput(
             "Videos für „$query“ – sie werden dem Nutzer bereits als Video-Kärtchen angezeigt (antippen spielt ab). " +
                 "Beschreibe kurz, was dabei ist, ohne die Links noch einmal aufzulisten:\n$list",
-            "„$query“ · ${found.size} Videos",
+            "„$query“ · ${found.size} Videos" + (if (source != "web") " · $source" else "") + (if (removed > 0) " · $removed gefiltert" else ""),
             webVideos = found,
         )
+    }
+
+    /** Sekunden → "1:23:45" bzw. "12:34" */
+    private fun fmtDuration(sec: Long): String {
+        if (sec <= 0) return ""
+        val h = sec / 3600
+        val m = (sec % 3600) / 60
+        val s = sec % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    }
+
+    /** Hübscher Name der Quelle aus der Adresse */
+    private fun sourceName(url: String): String {
+        val host = runCatching { URL(url).host.lowercase().removePrefix("www.").removePrefix("m.") }.getOrDefault("")
+        return when {
+            host.contains("youtube") || host == "youtu.be" -> "YouTube"
+            host.contains("vimeo") -> "Vimeo"
+            host.contains("dailymotion") -> "Dailymotion"
+            host.contains("tiktok") -> "TikTok"
+            host.contains("facebook") || host == "fb.watch" -> "Facebook"
+            host.contains("instagram") -> "Instagram"
+            else -> host.substringBeforeLast('.').substringAfterLast('.').replaceFirstChar { it.uppercase() }
+        }
+    }
+
+    /** ARD, ZDF, arte, 3sat, … über MediathekViewWeb – mit direkter Videodatei */
+    private fun searchMediathek(query: String, newest: Boolean): List<de.davscha.denkwerk.data.WebVideo> {
+        val body = JSONObject()
+            .put("queries", JSONArray().put(JSONObject().put("fields", JSONArray(listOf("title", "topic"))).put("query", query)))
+            .put("sortBy", if (newest) "timestamp" else "timestamp")
+            .put("sortOrder", "desc")
+            .put("future", false)
+            .put("offset", 0)
+            .put("size", 25)
+        val conn = URL("https://mediathekviewweb.de/api/query").openConnection() as HttpURLConnection
+        conn.connectTimeout = 10_000
+        conn.readTimeout = 20_000
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        // MediathekViewWeb erwartet das JSON als text/plain
+        conn.setRequestProperty("Content-Type", "text/plain")
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        val json = try {
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            if (conn.responseCode !in 200..299) throw IOException("MediathekViewWeb antwortet mit Fehler ${conn.responseCode}")
+            conn.inputStream.bufferedReader().readText()
+        } finally {
+            conn.disconnect()
+        }
+        val arr = JSONObject(json).optJSONObject("result")?.optJSONArray("results") ?: JSONArray()
+        val df = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY)
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            val direct = o.optString("url_video_hd").ifBlank { o.optString("url_video") }
+            de.davscha.denkwerk.data.WebVideo(
+                url = o.optString("url_website").ifBlank { direct },
+                title = listOf(o.optString("topic"), o.optString("title")).filter { it.isNotBlank() }.distinct().joinToString(" – "),
+                thumb = "",
+                duration = fmtDuration(o.optLong("duration")),
+                publisher = o.optString("channel"),
+                published = o.optLong("timestamp").takeIf { it > 0 }?.let { df.format(Date(it * 1000)) }.orEmpty(),
+                source = o.optString("channel").ifBlank { "Mediathek" },
+                directUrl = direct,
+            )
+        }.filter { it.url.startsWith("http") }
+            // Gleiche Sendung in mehreren Fassungen (Gebärdensprache, Hörfassung …) nur einmal
+            .distinctBy { it.title.lowercase().replace(Regex("\\(.*?\\)"), "").trim() }
+    }
+
+    /** Internet Archive: alte Filme, Dokus, TV-Mitschnitte */
+    private fun searchArchive(query: String): List<de.davscha.denkwerk.data.WebVideo> {
+        val q = URLEncoder.encode("($query) AND mediatype:(movies)", "UTF-8")
+        val json = httpGet(
+            "https://archive.org/advancedsearch.php?q=$q&fl[]=identifier&fl[]=title&fl[]=date&fl[]=creator&fl[]=runtime&sort[]=downloads+desc&rows=20&output=json",
+            referer = null,
+        )
+        val arr = JSONObject(json).optJSONObject("response")?.optJSONArray("docs") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            val id = o.optString("identifier")
+            val creator = when (val c = o.opt("creator")) { is JSONArray -> c.optString(0); is String -> c; else -> "" }
+            de.davscha.denkwerk.data.WebVideo(
+                url = "https://archive.org/details/$id",
+                title = o.optString("title"),
+                thumb = "https://archive.org/services/img/$id",
+                duration = o.optString("runtime"),
+                publisher = creator,
+                published = o.optString("date").take(10),
+                source = "Archive",
+            )
+        }.filter { it.title.isNotBlank() }
+    }
+
+    /** PeerTube-Netzwerk über SepiaSearch */
+    private fun searchPeerTube(query: String, newest: Boolean): List<de.davscha.denkwerk.data.WebVideo> {
+        val sort = if (newest) "-publishedAt" else "-match"
+        val json = httpGet("https://sepiasearch.org/api/v1/search/videos?search=" + URLEncoder.encode(query, "UTF-8") + "&count=20&sort=$sort", referer = null)
+        val arr = JSONObject(json).optJSONArray("data") ?: JSONArray()
+        return List(arr.length()) { i ->
+            val o = arr.getJSONObject(i)
+            val channel = o.optJSONObject("channel")
+            val account = o.optJSONObject("account")
+            val host = channel?.optString("host").orEmpty().ifBlank { account?.optString("host").orEmpty() }
+            val thumb = o.optString("thumbnailUrl").ifBlank {
+                o.optString("thumbnailPath").takeIf { it.isNotBlank() && host.isNotBlank() }?.let { "https://$host$it" }.orEmpty()
+            }
+            de.davscha.denkwerk.data.WebVideo(
+                url = o.optString("url"),
+                title = o.optString("name"),
+                thumb = thumb,
+                duration = fmtDuration(o.optLong("duration")),
+                publisher = channel?.optString("displayName").orEmpty().ifBlank { account?.optString("displayName").orEmpty() },
+                published = o.optString("publishedAt").take(10),
+                source = "PeerTube",
+            )
+        }.filter { it.url.startsWith("http") }
     }
 
     /** DuckDuckGo-Videosuche: wie die Bildersuche, nur mit v.js */
@@ -683,6 +852,7 @@ class Toolbox(
                 duration = o.optString("duration"),
                 publisher = o.optString("uploader").ifBlank { o.optString("publisher") },
                 published = o.optString("published").take(10),
+                source = sourceName(o.optString("content")),
             )
         }.filter { it.url.startsWith("http") }
     }
@@ -700,6 +870,7 @@ class Toolbox(
                 duration = o.optString("length"),
                 publisher = o.optString("author"),
                 published = o.optString("publishedDate").take(10),
+                source = sourceName(o.optString("url")),
             )
         }.filter { it.url.startsWith("http") }
     }

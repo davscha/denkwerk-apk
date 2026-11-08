@@ -75,6 +75,7 @@ private val KNOWN_TOOLS = setOf(
 private const val TOOL_HINT =
     "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
         "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
+        "Bei Videos wähle die passende Quelle: Dokus/Reportagen/TV-Sendungen → quelle=mediathek, alte Filme/Archivmaterial → archiv. " +
         "Für Videos nutze videos_suchen (erscheinen automatisch als Kärtchen); soll ein YouTube-Video zusammengefasst oder " +
         "erklärt werden, nutze video_verstehen mit dessen Adresse. " +
         "Du hast Werkzeuge: uhrzeit, rechnen, web_suche, bilder_suchen, videos_suchen, video_verstehen, seite_lesen, bilder_auf_seite, webseite_durchsuchen, auf_seite_suchen und herunterladen. " +
@@ -275,6 +276,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         chatImages = { imagesInCurrentChat() },
         allowedDirs = { listOf(store.dataDir, context.filesDir, context.cacheDir) },
         sauceNaoKey = { settings.sauceNaoKey },
+        videoFilter = { Triple(settings.videoShowYoutube, settings.videoShowSocial, settings.videoBlocked) },
     )
 
     /** Alle Bilder im offenen Chat, neueste zuerst: angehängte, heruntergeladene und gefundene */

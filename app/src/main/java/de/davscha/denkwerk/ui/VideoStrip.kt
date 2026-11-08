@@ -32,6 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -54,13 +57,25 @@ fun VideoStrip(videos: List<WebVideo>, onSummarize: ((WebVideo) -> Unit)?) {
 @Composable
 private fun VideoCard(v: WebVideo, onSummarize: ((WebVideo) -> Unit)?) {
     val uri = LocalUriHandler.current
+    val context = LocalContext.current
     val isYoutube = v.url.contains("youtube.com") || v.url.contains("youtu.be")
+    // Direkte Videodatei (Mediathek) im Video-Player öffnen, sonst die Seite
+    fun play() {
+        if (v.directUrl.isNotBlank()) {
+            val intent = Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(v.directUrl), "video/*").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(Intent.createChooser(intent, "Video abspielen mit …").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return
+            } catch (e: Exception) { /* weiter mit der Webseite */ }
+        }
+        runCatching { uri.openUri(v.url) }
+    }
     Column(
         Modifier
             .width(260.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable { runCatching { uri.openUri(v.url) } },
+            .clickable { play() },
     ) {
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) {
             SubcomposeAsyncImage(
@@ -69,11 +84,32 @@ private fun VideoCard(v: WebVideo, onSummarize: ((WebVideo) -> Unit)?) {
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
                 error = {
+                    // Kein Vorschaubild (z. B. Mediathek): Sendername groß
                     Box(Modifier.fillMaxSize().background(Color(0xFF26262B)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.VideocamOff, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (v.source.isNotBlank()) {
+                            Text(v.source, color = Color.White.copy(alpha = 0.85f), fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(Icons.Default.VideocamOff, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 },
             )
+            // Quelle als Schild oben links
+            if (v.source.isNotBlank()) {
+                Text(
+                    v.source,
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (v.directUrl.isNotBlank()) Mint.copy(alpha = 0.9f) else Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
             // Abspiel-Symbol in der Mitte
             Box(
                 Modifier.align(Alignment.Center).size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.55f)),

@@ -46,14 +46,20 @@ data class WebVideo(
     val publisher: String = "",
     /** Datum, z. B. "2026-10-03" */
     val published: String = "",
+    /** Quelle fürs Schild auf dem Kärtchen, z. B. "ZDF", "Archive", "Vimeo" */
+    val source: String = "",
+    /** Direkte Videodatei (.mp4) – wird im Video-Player geöffnet statt im Browser */
+    val directUrl: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject().put("url", url).put("title", title).put("thumb", thumb)
         .put("duration", duration).put("publisher", publisher).put("published", published)
+        .put("source", source).put("directUrl", directUrl)
 
     companion object {
         fun fromJson(o: JSONObject) = WebVideo(
             o.optString("url"), o.optString("title"), o.optString("thumb"),
             o.optString("duration"), o.optString("publisher"), o.optString("published"),
+            o.optString("source"), o.optString("directUrl"),
         )
     }
 }

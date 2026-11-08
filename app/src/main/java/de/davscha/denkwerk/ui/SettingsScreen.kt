@@ -460,6 +460,36 @@ private fun ToolsSection(vm: AppViewModel) {
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // Videosuche: Quellen filtern
+        var showYt by remember { mutableStateOf(vm.settings.videoShowYoutube) }
+        var showSocial by remember { mutableStateOf(vm.settings.videoShowSocial) }
+        var blocked by remember { mutableStateOf(vm.settings.videoBlocked) }
+        Text("Videosuche", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("YouTube-Treffer zeigen", fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Switch(checked = showYt, onCheckedChange = { showYt = it; vm.settings.videoShowYoutube = it })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Soziale Medien zeigen", fontSize = 13.sp)
+                Text("TikTok, Instagram, Facebook, X, Reddit, Pinterest …", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = showSocial, onCheckedChange = { showSocial = it; vm.settings.videoShowSocial = it })
+        }
+        OutlinedTextField(
+            value = blocked,
+            onValueChange = { blocked = it; vm.settings.videoBlocked = it },
+            label = { Text("Eigene Sperrliste") },
+            placeholder = { Text("z. B. dailymotion.com, bitchute.com") },
+            minLines = 1,
+            maxLines = 3,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            "Im Chat geht auch „ohne YouTube“ oder „nur aus den Mediatheken“. Weitere Quellen: Mediatheken (ARD, ZDF, arte …), Internet Archive, PeerTube, Vimeo.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         var sauce by remember { mutableStateOf(vm.settings.sauceNaoKey) }
         OutlinedTextField(
             value = sauce,

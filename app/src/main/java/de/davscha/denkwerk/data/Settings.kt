@@ -61,6 +61,21 @@ class Settings(context: Context) {
         get() = prefs.getString("sauceNaoKey", "") ?: ""
         set(v) = prefs.edit().putString("sauceNaoKey", v.trim()).apply()
 
+    /** Videosuche: YouTube-Treffer zeigen (Standard an) */
+    var videoShowYoutube: Boolean
+        get() = prefs.getBoolean("videoShowYoutube", true)
+        set(v) = prefs.edit().putBoolean("videoShowYoutube", v).apply()
+
+    /** Videosuche: Treffer von TikTok, Instagram, Facebook, X, Reddit … zeigen (Standard an) */
+    var videoShowSocial: Boolean
+        get() = prefs.getBoolean("videoShowSocial", true)
+        set(v) = prefs.edit().putBoolean("videoShowSocial", v).apply()
+
+    /** Eigene Sperrliste für die Videosuche (Domains, durch Komma oder Zeilen getrennt) */
+    var videoBlocked: String
+        get() = prefs.getString("videoBlocked", "") ?: ""
+        set(v) = prefs.edit().putString("videoBlocked", v).apply()
+
     var systemPrompt: String
         get() = prefs.getString("systemPrompt", DEFAULT_SYSTEM_PROMPT) ?: DEFAULT_SYSTEM_PROMPT
         set(v) = prefs.edit().putString("systemPrompt", v).apply()
