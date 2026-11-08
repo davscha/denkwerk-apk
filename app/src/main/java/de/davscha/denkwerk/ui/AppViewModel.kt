@@ -314,6 +314,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!memoryEnabledState || memory.isEmpty()) return ""
         val lines = memory.joinToString("\n") { "- ${it.text}" }.take(2500)
         return "\n\nWas du über den Nutzer weißt (nutze es nur, wenn es zur Frage passt):\n$lines"
+    }
 
     // ---------- Vorlesen ----------
     var speakingId by mutableStateOf<String?>(null)
