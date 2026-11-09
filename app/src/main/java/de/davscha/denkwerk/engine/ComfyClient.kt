@@ -159,5 +159,6 @@ class ComfyClient(private val host: String, private val port: Int) {
                 .put("8", node("VAELoader", JSONObject().put("vae_name", names["vae"] ?: r.vae)))
                 .put("7", node("VAEDecode", JSONObject().put("samples", link("2", 0)).put("vae", link("8", 0))))
                 .put("9", node("SaveImage", JSONObject().put("filename_prefix", "Denkwerk/bild").put("images", link("7", 0))))
+        }
     }
 }
