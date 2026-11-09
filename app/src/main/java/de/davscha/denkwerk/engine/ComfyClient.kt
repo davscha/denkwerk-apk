@@ -48,15 +48,21 @@ class ComfyClient(private val host: String, private val port: Int) {
 
     /** Welche der benötigten Dateien fehlen auf dem PC? (leer = alles da) */
     fun missingFiles(r: ImageRecipe): List<String> {
-        val unets = options("UNETLoader", "unet_name").map { it.replace('\\', '/').substringAfterLast('/') }
-        val clips = options("CLIPLoader", "clip_name").map { it.replace('\\', '/').substringAfterLast('/') }
-        val vaes = options("VAELoader", "vae_name").map { it.replace('\\', '/').substringAfterLast('/') }
+        fun names(node: String, field: String) = options(node, field).map { it.replace('\\', '/').substringAfterLast('/') }
         return buildList {
-            if (r.unet !in unets) add("diffusion_models/${r.unet}")
-            if (r.clip !in clips) add("text_encoders/${r.clip}")
-            if (r.vae !in vaes) add("vae/${r.vae}")
+            if (r.unet !in names("UNETLoader", "unet_name")) add("diffusion_models/${r.unet}")
+            if (r.lora !in names("LoraLoaderModelOnly", "lora_name")) add("loras/${r.lora}")
+            if (r.clip !in names("CLIPLoader", "clip_name")) add("text_encoders/${r.clip}")
+            if (r.vae !in names("VAELoader", "vae_name")) add("vae/${r.vae}")
         }
     }
+
+    /** Seitenverhältnisse, die der ResolutionSelector anbietet */
+    fun aspects(): List<String> = runCatching { options("ResolutionSelector", "aspect_ratio") }.getOrDefault(emptyList())
+
+    /** Datei steht in ComfyUI evtl. mit Unterordner – den echten Namen finden */
+    fun resolve(node: String, field: String, file: String): String =
+        runCatching { options(node, field).firstOrNull { it.replace('\\', '/').substringAfterLast('/') == file } }.getOrNull() ?: file
 
     /** Ollama auf demselben PC kann parallel laufen – Schickt den Workflow und wartet auf das Bild (PNG-Bytes). */
     suspend fun run(workflow: JSONObject, onProgress: (Int) -> Unit = {}): ByteArray {
@@ -117,31 +123,41 @@ class ComfyClient(private val host: String, private val port: Int) {
         fun seedOf(path: String): Long? = Regex("-s(\\d+)\\.png$").find(path)?.groupValues?.get(1)?.toLongOrNull()
 
         /**
-         * Anima-Workflow (API-Format), wie Davids AnimaAi.json:
-         * UNETLoader + CLIPLoader (qwen_image) + VAELoader → Prompt → Negativ = ConditioningZeroOut → KSampler → VAE → Speichern
+         * MOSS-Image-Workflow (API-Format), wie Davids MossImage.json:
+         * UNET → LoRA (4 Schritte) → SkipLayerGuidance → KSampler; CLIP (moss_image) → Prompt, Negativ = ConditioningZeroOut;
+         * ResolutionSelector (Seitenverhältnis + Megapixel) → EmptyLatentImage; Flux2-VAE → Speichern
          */
-        fun buildWorkflow(r: ImageRecipe, positive: String, seed: Long): JSONObject {
+        fun buildWorkflow(r: ImageRecipe, positive: String, seed: Long, names: Map<String, String> = emptyMap()): JSONObject {
             fun link(n: String, out: Int) = JSONArray().put(n).put(out)
             fun node(type: String, inputs: JSONObject) = JSONObject().put("class_type", type).put("inputs", inputs)
             return JSONObject()
-                .put("21", node("UNETLoader", JSONObject().put("unet_name", r.unet).put("weight_dtype", "default")))
-                .put("22", node("CLIPLoader", JSONObject().put("clip_name", r.clip).put("type", "qwen_image").put("device", "default")))
-                .put("23", node("VAELoader", JSONObject().put("vae_name", r.vae)))
-                .put("2", node("CLIPTextEncode", JSONObject().put("text", positive).put("clip", link("22", 0))))
-                .put("24", node("ConditioningZeroOut", JSONObject().put("conditioning", link("2", 0))))
-                .put("8", node("EmptyLatentImage", JSONObject().put("width", r.safeWidth).put("height", r.safeHeight).put("batch_size", 1)))
+                .put("20", node("UNETLoader", JSONObject().put("unet_name", names["unet"] ?: r.unet).put("weight_dtype", "default")))
+                .put("36", node("LoraLoaderModelOnly", JSONObject().put("lora_name", names["lora"] ?: r.lora).put("strength_model", 1.0).put("model", link("20", 0))))
                 .put(
-                    "4",
+                    "24",
+                    node(
+                        "SkipLayerGuidanceDiTSimple",
+                        JSONObject().put("double_layers", "").put("single_layers", "22").put("start_percent", 0.0).put("end_percent", 0.5)
+                            .put("model", link("36", 0)),
+                    ),
+                )
+                .put("13", node("CLIPLoader", JSONObject().put("clip_name", names["clip"] ?: r.clip).put("type", "moss_image").put("device", "default")))
+                .put("45", node("CLIPTextEncode", JSONObject().put("text", positive).put("clip", link("13", 0))))
+                .put("42", node("ConditioningZeroOut", JSONObject().put("conditioning", link("45", 0))))
+                .put("22", node("ResolutionSelector", JSONObject().put("aspect_ratio", r.aspect).put("megapixels", r.megapixels.toDouble()).put("multiple", 16)))
+                .put("6", node("EmptyLatentImage", JSONObject().put("width", link("22", 0)).put("height", link("22", 1)).put("batch_size", 1)))
+                .put(
+                    "2",
                     node(
                         "KSampler",
                         JSONObject().put("seed", seed).put("steps", r.steps).put("cfg", r.cfg.toDouble())
                             .put("sampler_name", r.sampler).put("scheduler", r.scheduler).put("denoise", 1.0)
-                            .put("model", link("21", 0)).put("positive", link("2", 0)).put("negative", link("24", 0))
-                            .put("latent_image", link("8", 0)),
+                            .put("model", link("24", 0)).put("positive", link("45", 0)).put("negative", link("42", 0))
+                            .put("latent_image", link("6", 0)),
                     ),
                 )
-                .put("5", node("VAEDecode", JSONObject().put("samples", link("4", 0)).put("vae", link("23", 0))))
-                .put("6", node("SaveImage", JSONObject().put("filename_prefix", "Denkwerk/bild").put("images", link("5", 0))))
-        }
+                .put("8", node("VAELoader", JSONObject().put("vae_name", names["vae"] ?: r.vae)))
+                .put("7", node("VAEDecode", JSONObject().put("samples", link("2", 0)).put("vae", link("8", 0))))
+                .put("9", node("SaveImage", JSONObject().put("filename_prefix", "Denkwerk/bild").put("images", link("7", 0))))
     }
 }

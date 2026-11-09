@@ -69,15 +69,15 @@ sealed interface DownloadState {
 data class ModelChoice(val source: Source, val id: String, val title: String, val subtitle: String, val vision: Boolean?, val tools: Boolean? = null)
 
 private val KNOWN_TOOLS = setOf(
-    "tags_pruefen", "tags_suchen", "bild_malen",
+    "bild_malen",
     "uhrzeit", "rechnen", "web_suche", "bilder_suchen", "videos_suchen", "video_verstehen", "bild_rueckwaertssuche", "anime_bild_quelle", "seite_lesen", "bilder_auf_seite", "webseite_durchsuchen", "auf_seite_suchen",
     "herunterladen", "merken", "vergessen",
 )
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, schreib einen Danbooru-Tag-Prompt und ruf bild_malen auf. " +
-        "Soll das zuletzt gemalte Bild nur geändert werden („das gleiche Bild, aber …“), übernimm die alten Tags, bau die Änderung ein und setze gleiches_bild=true. " +
+    "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, beschreibe das Bild auf Englisch in klaren Sätzen (Motiv, Aussehen, Kleidung, Pose, Ort, Licht, Stil, Kamera) und ruf bild_malen auf. " +
+        "Soll das zuletzt gemalte Bild nur geändert werden („das gleiche Bild, aber …“), übernimm die alte Beschreibung, bau die Änderung ein und setze gleiches_bild=true. " +
             "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
         "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
         "Bei Videos wähle die passende Quelle: Dokus/Reportagen/TV-Sendungen → quelle=mediathek, alte Filme/Archivmaterial → archiv. " +
@@ -364,6 +364,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var comfyBusy by mutableStateOf(false)
         private set
+    /** Seitenverhältnisse des ResolutionSelector */
+    var comfyAspects by mutableStateOf(ImageRecipe.DEFAULT_ASPECTS)
+        private set
+
     /** ComfyUI eingetragen? Dann wird bild_malen angeboten */
     val paintAvailable: Boolean get() = settings.comfyHost.isNotBlank()
     /** Fortschritt des laufenden Bildes in Sekunden (null = kein Bild in Arbeit) */
@@ -390,7 +394,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val c = ComfyClient(settings.comfyHost, settings.comfyPort)
                 val info = withContext(Dispatchers.IO) { c.test() }
                 val missing = withContext(Dispatchers.IO) { runCatching { c.missingFiles(recipe) }.getOrDefault(emptyList()) }
-                comfyStatus = if (missing.isEmpty()) "Verbunden · $info · Anima-Dateien gefunden"
+                withContext(Dispatchers.IO) { c.aspects() }.takeIf { it.isNotEmpty() }?.let { comfyAspects = it }
+                comfyStatus = if (missing.isEmpty()) "Verbunden · $info · MOSS-Dateien gefunden"
                 else "Verbunden · $info – es fehlt: " + missing.joinToString()
             } catch (e: Throwable) {
                 comfyStatus = "Nicht erreichbar: ${e.message ?: e.javaClass.simpleName}"
@@ -401,7 +406,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Für die Werkzeug-Beschreibung */
-    private fun recipeDescription(): String = "Modell: ${ComfyClient.shortName(recipe.unet)} (Anima), Bildgröße ${recipe.safeWidth}×${recipe.safeHeight}."
+    private fun recipeDescription(): String = "Modell: ${ComfyClient.shortName(recipe.unet)} (MOSS Image), Seitenverhältnis ${recipe.aspect}."
 
     /**
      * Malt ein Bild: Ollama-Modell vorher entladen (Grafikspeicher!), Prompt zusammensetzen
@@ -449,12 +454,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (settings.source == Source.OLLAMA && settings.ollamaModel.isNotBlank()) {
                 withContext(Dispatchers.IO) { runCatching { OllamaClient(settings.ollamaHost, settings.ollamaPort).unload(settings.ollamaModel) } }
             }
-            val cleanTags = tags.replace(Regex("```\\w*"), "").replace(Regex("\\s*\\n\\s*"), ", ").trim().trim(',')
-            val positive = (if (r.sfw) "safe, " else "") + cleanTags
+            // MOSS versteht Sätze, Wortgruppen und JSON – nur Code-Zäune entfernen, Zeilen bleiben
+            val positive = tags.replace(Regex("```\\w*"), "").trim()
             val seed = fixedSeed ?: (Math.random() * 1e15).toLong()
-            val wf = ComfyClient.buildWorkflow(r, positive, seed)
+            val client = ComfyClient(settings.comfyHost, settings.comfyPort)
             val bytes = withContext(Dispatchers.IO) {
-                ComfyClient(settings.comfyHost, settings.comfyPort).run(wf) { s ->
+                // Dateien können in Unterordnern liegen (z. B. moss\\RealisticFreedom.safetensors) – echten Namen suchen
+                val names = mapOf(
+                    "unet" to client.resolve("UNETLoader", "unet_name", r.unet),
+                    "lora" to client.resolve("LoraLoaderModelOnly", "lora_name", r.lora),
+                    "clip" to client.resolve("CLIPLoader", "clip_name", r.clip),
+                    "vae" to client.resolve("VAELoader", "vae_name", r.vae),
+                )
+                val wf = ComfyClient.buildWorkflow(r, positive, seed, names)
+                client.run(wf) { s ->
                     viewModelScope.launch(Dispatchers.Main) { paintSeconds = s }
                 }
             }
@@ -575,8 +588,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         recipe = settings.imageRecipe
-        // Danbooru-Tag-Liste im Hintergrund laden (für Prompt-Schmied und Vorschläge beim Tippen)
-        viewModelScope.launch(Dispatchers.IO) { de.davscha.denkwerk.data.TagLibrary.load(context) }
         thinkingState = settings.thinking
         toolsEnabledState = settings.toolsEnabled
         memoryEnabledState = settings.memoryEnabled
@@ -1085,8 +1096,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche", "videos_suchen" -> args.optString("anfrage")
         "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
-        "tags_suchen" -> args.optString("stichwort")
-        "tags_pruefen" -> ""
         "bild_malen" -> args.optString("prompt").take(60)
 
         "bild_rueckwaertssuche", "anime_bild_quelle" -> args.optString("bild").let { b ->

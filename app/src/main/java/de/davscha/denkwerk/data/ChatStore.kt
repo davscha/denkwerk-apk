@@ -140,15 +140,11 @@ class ChatStore(private val context: Context) {
             val arr = JSONObject(f.readText()).getJSONArray("assistenten")
             List(arr.length()) { Preset.fromJson(arr.getJSONObject(it)) }
         }.getOrElse { Preset.samples }
-        // Neue Beispiel-Assistenten einmalig nachliefern (gelöschte bleiben gelöscht)
-        val prefs = context.getSharedPreferences("denkwerk", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("added_prompt_smith", false)) {
-            prefs.edit().putBoolean("added_prompt_smith", true).apply()
-            if (list.none { it.id == Preset.promptSmith.id }) {
-                val withNew = listOf(Preset.promptSmith) + list
-                savePresets(withNew)
-                return withNew
-            }
+        // Prompt-Schmied (Danbooru-Tags) ist veraltet – einmal entfernen
+        if (list.any { it.id == Preset.OLD_PROMPT_SMITH_ID }) {
+            val cleaned = list.filter { it.id != Preset.OLD_PROMPT_SMITH_ID }
+            savePresets(cleaned)
+            return cleaned
         }
         return list
     }

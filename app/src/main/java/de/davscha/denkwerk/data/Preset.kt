@@ -17,8 +17,6 @@ data class Preset(
     /** "INTERNAL:gemma-4-e4b" oder "OLLAMA:qwen2.5vl:7b" – leer = aktuelles Modell behalten */
     val modelKey: String = "",
     val starters: List<String> = emptyList(),
-    /** Tag-Vorschläge beim Tippen (Danbooru-Liste) */
-    val tagHelper: Boolean = false,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id)
@@ -29,7 +27,6 @@ data class Preset(
         .put("temperature", temperature.toDouble())
         .put("modelKey", modelKey)
         .put("starters", JSONArray(starters))
-        .put("tagHelper", tagHelper)
 
     companion object {
         fun fromJson(o: JSONObject) = Preset(
@@ -41,32 +38,13 @@ data class Preset(
             temperature = o.optDouble("temperature", 0.7).toFloat(),
             modelKey = o.optString("modelKey"),
             starters = o.optJSONArray("starters")?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty(),
-            tagHelper = o.optBoolean("tagHelper", false),
         )
 
-        /** Bild-Prompts im Danbooru-Tag-Stil – mit Tag-Liste und Werkzeug tags_pruefen */
-        val promptSmith = Preset(
-            id = "sample-prompt",
-            name = "Prompt-Schmied",
-            emoji = "🎨",
-            description = "Bild-Prompts im Danbooru-Tag-Stil – aus Text oder Bild",
-            systemPrompt = "Du schreibst Bild-Prompts für Stable Diffusion/ComfyUI im Danbooru-Tag-Stil: eine Kommaliste aus kurzen englischen Tags, " +
-                "kein Fließtext. Reihenfolge: Personenzahl (1girl, 1boy, solo …), Aussehen (Haare, Augen, Körper), Kleidung, Ausdruck und Pose, " +
-                "Gegenstände, Ort und Stimmung, Kamera/Bildaufbau. Hängt der Nutzer ein Bild an, beschreibe es als solche Tag-Liste. " +
-                "Wenn das Werkzeug tags_pruefen verfügbar ist, prüfe deine Liste damit und übernimm die korrigierte Fassung; mit tags_suchen findest du passende echte Tags. " +
-                "Gib den fertigen Prompt in einem Code-Block (```text) aus, damit er sich kopieren lässt, und erkläre danach in 1–3 Sätzen auf Deutsch, was du gewählt hast. " +
-                "Auf Wunsch auch einen Negativ-Prompt als zweiten Code-Block.",
-            temperature = 0.6f,
-            starters = listOf(
-                "Mach einen Prompt für: ",
-                "Mach aus dem angehängten Bild eine Tag-Liste",
-                "Prüfe und verbessere diesen Prompt: ",
-            ),
-            tagHelper = true,
-        )
+        /** Früherer Beispiel-Assistent (Danbooru-Tags) – wird beim Laden entfernt */
+        const val OLD_PROMPT_SMITH_ID = "sample-prompt"
 
         /** Beispiel-Assistenten beim allerersten Start */
-        val samples get() = listOf(promptSmith) + baseSamples
+        val samples get() = baseSamples
 
         private val baseSamples = listOf(
             Preset(

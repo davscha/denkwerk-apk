@@ -599,9 +599,8 @@ private fun ComfySection(vm: AppViewModel) {
     var host by remember { mutableStateOf(vm.settings.comfyHost) }
     var port by remember { mutableStateOf(vm.settings.comfyPort.toString()) }
     val r = vm.recipe
-    var width by remember { mutableStateOf(r.width.toString()) }
-    var height by remember { mutableStateOf(r.height.toString()) }
-    Section(Icons.Default.Brush, "Bilder malen (ComfyUI)", "Testphase: Anima Photo Turbo auf dem PC") {
+    var aspectMenu by remember { mutableStateOf(false) }
+    Section(Icons.Default.Brush, "Bilder malen (ComfyUI)", "MOSS Image auf dem PC – versteht Sätze, Wortgruppen und JSON") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = host, onValueChange = { host = it }, label = { Text("IP-Adresse") }, singleLine = true,
@@ -624,45 +623,34 @@ private fun ComfySection(vm: AppViewModel) {
             Text(vm.comfyStatus, fontSize = 12.sp, color = if (vm.comfyStatus.startsWith("Verbunden")) Mint else MaterialTheme.colorScheme.error)
         }
         Text(
-            "Benutzt: ${r.unet} (diffusion_models), ${r.clip} (text_encoders), ${r.vae} (vae)",
+            "Benutzt: ${r.unet} (diffusion_models), ${r.lora} (loras), ${r.clip} (text_encoders), ${r.vae} (vae)",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // Bildgröße
-        Text("Bildgröße", fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = width,
-                onValueChange = { v -> width = v.filter(Char::isDigit).take(4); width.toIntOrNull()?.let { vm.updateRecipe(vm.recipe.copy(width = it)) } },
-                label = { Text("Breite") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f),
-            )
-            Text("×", fontSize = 16.sp)
-            OutlinedTextField(
-                value = height,
-                onValueChange = { v -> height = v.filter(Char::isDigit).take(4); height.toIntOrNull()?.let { vm.updateRecipe(vm.recipe.copy(height = it)) } },
-                label = { Text("Höhe") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f),
-            )
-        }
-        if (r.safeWidth != r.width || r.safeHeight != r.height) {
-            Text("Wird gemalt als ${r.safeWidth}×${r.safeHeight} (Vielfache von 16, 256–2048)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         Text("Schritte: ${r.steps}", fontSize = 13.sp)
-        Slider(value = r.steps.toFloat(), onValueChange = { vm.updateRecipe(r.copy(steps = it.toInt())) }, valueRange = 1f..40f, steps = 38)
+        Slider(value = r.steps.toFloat(), onValueChange = { vm.updateRecipe(r.copy(steps = it.toInt())) }, valueRange = 1f..30f, steps = 28)
         Text("CFG: ${"%.1f".format(r.cfg)}", fontSize = 13.sp)
         Slider(value = r.cfg, onValueChange = { vm.updateRecipe(r.copy(cfg = (it * 2).toInt() / 2f)) }, valueRange = 1f..10f)
+
+        // Seitenverhältnis und Megapixel (ResolutionSelector)
+        Text("Seitenverhältnis", fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(top = 4.dp))
+        Box {
+            OutlinedButton(onClick = { aspectMenu = true }) {
+                Text(r.aspect, maxLines = 1)
+                Icon(Icons.Default.KeyboardArrowDown, null)
+            }
+            DropdownMenu(expanded = aspectMenu, onDismissRequest = { aspectMenu = false }) {
+                vm.comfyAspects.forEach { a ->
+                    DropdownMenuItem(text = { Text(a) }, onClick = { aspectMenu = false; vm.updateRecipe(r.copy(aspect = a)) })
+                }
+            }
+        }
+        Text("Megapixel: ${"%.1f".format(r.megapixels)}", fontSize = 13.sp)
+        Slider(value = r.megapixels, onValueChange = { vm.updateRecipe(r.copy(megapixels = (it * 2).toInt() / 2f)) }, valueRange = 0.5f..4f, steps = 6)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = r.sampler, onValueChange = { vm.updateRecipe(r.copy(sampler = it.trim())) }, label = { Text("Sampler") }, singleLine = true, modifier = Modifier.weight(1f))
             OutlinedTextField(value = r.scheduler, onValueChange = { vm.updateRecipe(r.copy(scheduler = it.trim())) }, label = { Text("Scheduler") }, singleLine = true, modifier = Modifier.weight(1f))
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Jugendfreie Bilder", fontSize = 14.sp)
-                Text("„safe“ vorn im Prompt", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Switch(checked = r.sfw, onCheckedChange = { vm.updateRecipe(r.copy(sfw = it)) })
         }
         Text(
             "Vor jedem Bild wird das Ollama-Modell entladen, damit ComfyUI genug Grafikspeicher hat – es lädt bei der nächsten Frage von selbst wieder.",

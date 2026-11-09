@@ -22,7 +22,7 @@
 - [ ] Timer, Wecker, Kalender
 - [x] Videosuche mit Kärtchen + YouTube-Videos über Untertitel verstehen
 - [x] Bild-Rückwärtssuche: Google Lens, Yandex-Werkzeug, SauceNAO (optional)
-- [x] Danbooru-Tag-Liste: Prompt-Schmied, tags_pruefen/tags_suchen, Vorschläge beim Tippen
+- [x] ~~Danbooru-Tag-Liste~~ entfernt (MOSS Image versteht natürliche Sprache)
 - [ ] Python auf dem PC ausführen
 
 ## Als Nächstes
@@ -40,5 +40,5 @@
 - [ ] Oberfläche in Deutsch, Englisch, Spanisch, Französisch
 - [ ] OpenAI-kompatible Server (LM Studio, llama.cpp)
 - [x] Bilder malen über ComfyUI (NoobAI, Ordner denkwerk/noobai, Char- und Style-LoRAs)
-- [x] Testphase: Anima-Workflow (AnimaPhotoTurbo, Qwen-Encoder/VAE), Breite × Höhe statt Format (Standard 960 × 1280); NoobAI-Checkpoints/LoRAs vorerst entfernt
+- [x] MOSS-Image-Workflow (RealisticFreedom + 4-Step-LoRA, Qwen359B, Flux2-VAE): Schritte 6, CFG 1, Seitenverhältnis 9:16, 2 Megapixel
 - [x] Seed: „das gleiche Bild, aber …“ behält den Seed, 🔒 am Bild hält ihn fest

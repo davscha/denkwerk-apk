@@ -119,34 +119,16 @@ class Toolbox(
             put(
                 spec(
                     "bild_malen",
-                    "Malt ein Bild mit ComfyUI auf dem PC des Nutzers (Anime-/Illustrationsmodell). Der Prompt ist eine Kommaliste im " +
-                        "Danbooru-Tag-Stil auf Englisch (z. B. \"1girl, solo, long hair, red kimono, cherry blossoms, night\"). " +
-                        "Bildgröße stellt der Nutzer in den Einstellungen ein. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
+                    "Malt ein Bild mit ComfyUI auf dem PC des Nutzers (MOSS Image – versteht natürliche Sprache, auch lange Beschreibungen). " +
+                        "Der Prompt beschreibt das Bild auf Englisch in klaren Sätzen oder Wortgruppen: Motiv, Aussehen, Kleidung, Pose, Ort, Licht, " +
+                        "Stil und Kamera (z. B. \"A young woman in a red kimono stands under cherry blossoms at night, soft lantern light, photo, 35mm\"). " +
+                        "Seitenverhältnis stellt der Nutzer in den Einstellungen ein. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
                     JSONObject()
-                        .put("prompt", JSONObject().put("type", "string").put("description", "Danbooru-Tags, durch Kommas getrennt"))
+                        .put("prompt", JSONObject().put("type", "string").put("description", "Bildbeschreibung auf Englisch"))
                         .put("gleiches_bild", JSONObject().put("type", "boolean")
                             .put("description", "true, wenn das zuletzt gemalte Bild nur abgeändert werden soll (gleicher Aufbau, gleicher Seed). " +
-                                "Dann die alten Tags übernehmen und nur die gewünschten Änderungen einbauen.")),
+                                "Dann die alte Beschreibung übernehmen und nur die gewünschten Änderungen einbauen.")),
                     required = listOf("prompt"),
-                )
-            )
-        }
-        if (de.davscha.denkwerk.data.TagLibrary.loaded) {
-            put(
-                spec(
-                    "tags_pruefen",
-                    "Prüft einen Bild-Prompt im Danbooru-Tag-Stil gegen die Tag-Liste des Nutzers (18.000 echte Tags): " +
-                        "Schreibvarianten werden zum echten Tag, Doppelte fallen weg, alles wird nach Fächern sortiert; unbekannte Tags bekommen Vorschläge.",
-                    props("tags" to "Die Tag-Liste, durch Kommas getrennt"),
-                    required = listOf("tags"),
-                )
-            )
-            put(
-                spec(
-                    "tags_suchen",
-                    "Sucht passende echte Danbooru-Tags zu einem englischen Stichwort (z. B. \"hair\", \"smil\", \"kimono\"), beliebteste zuerst.",
-                    props("stichwort" to "Englisches Stichwort oder Wortanfang"),
-                    required = listOf("stichwort"),
                 )
             )
         }
@@ -264,7 +246,6 @@ class Toolbox(
         )
         "video_verstehen" -> videoTranscript(args.optString("url"))
         "bild_rueckwaertssuche" -> reverseSearch(args.optString("bild"))
-        "tags_pruefen" -> checkTags(args.optString("tags"))
         "bild_malen" -> {
             val start = System.currentTimeMillis()
             val same = args.optBoolean("gleiches_bild", false) || args.optString("gleiches_bild") == "true"
@@ -272,7 +253,6 @@ class Toolbox(
             val secs = (System.currentTimeMillis() - start) / 1000
             ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s$note", images = listOf(path))
         }
-        "tags_suchen" -> findTags(args.optString("stichwort"))
         "anime_bild_quelle" -> sauceNao(args.optString("bild"))
         "auf_seite_suchen" -> siteSearch(
             args.optString("url"),
@@ -702,36 +682,6 @@ class Toolbox(
     private fun canonical(u: String): String =
         u.lowercase().replace("://www.", "://").substringBefore("?utm_").trimEnd('/')
 
-    // ---------- Danbooru-Tags ----------
-
-    private fun checkTags(text: String): ToolOutput {
-        val lib = de.davscha.denkwerk.data.TagLibrary
-        if (text.isBlank()) return ToolOutput("Keine Tags angegeben.", "leer", ok = false)
-        val r = lib.check(text)
-        val forModel = buildString {
-            append("Geprüfter Prompt (übernimm diese Fassung):\n").append(r.prompt).append("\n")
-            if (r.fixed.isNotEmpty()) append("\nKorrigiert: ").append(r.fixed.joinToString("; ") { (a, b) -> "$a → $b" }).append("\n")
-            if (r.unknown.isNotEmpty()) {
-                append("\nNicht in der Tag-Liste (bleiben drin, ggf. ersetzen): ")
-                append(r.unknown.joinToString("; ") { (u, near) -> if (near.isEmpty()) u else "$u (ähnlich: ${near.joinToString(", ")})" })
-                append("\n")
-            }
-            append("\nFächer: ").append(r.bySlot.entries.joinToString("; ") { (s, t) -> "${lib.slotLabel(s)}: ${t.joinToString(", ")}" })
-        }
-        val count = r.prompt.split(", ").count { it.isNotBlank() }
-        val summary = "$count Tags" + (if (r.fixed.isNotEmpty()) " · ${r.fixed.size} korrigiert" else "") +
-            (if (r.unknown.isNotEmpty()) " · ${r.unknown.size} unbekannt" else "")
-        return ToolOutput(forModel, summary)
-    }
-
-    private fun findTags(word: String): ToolOutput {
-        val hits = de.davscha.denkwerk.data.TagLibrary.suggest(word, de.davscha.denkwerk.data.TagField.ANY, 15)
-        if (hits.isEmpty()) return ToolOutput("Keine Tags zu „$word“ gefunden.", "nichts gefunden")
-        return ToolOutput(
-            "Tags zu „$word“ (beliebteste zuerst): " + hits.joinToString(", ") { "${it.name} (${it.count})" },
-            "„$word“ · ${hits.size} Tags",
-        )
-    }
 
     // ---------- Bild-Rückwärtssuche ----------
 
@@ -1397,9 +1347,7 @@ class Toolbox(
             "videos_suchen" -> "🎬" to "Videosuche"
             "video_verstehen" -> "📺" to "Video angeschaut"
             "bild_rueckwaertssuche" -> "🔁" to "Rückwärtssuche"
-            "tags_pruefen" -> "🏷️" to "Tags geprüft"
             "bild_malen" -> "🎨" to "Bild malen"
-            "tags_suchen" -> "🏷️" to "Tag-Suche"
             "anime_bild_quelle" -> "🎨" to "SauceNAO"
             "herunterladen" -> "⬇️" to "Herunterladen"
             "merken" -> "🧠" to "Gemerkt"
