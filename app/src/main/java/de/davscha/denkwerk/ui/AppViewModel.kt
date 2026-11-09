@@ -457,6 +457,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val sameImageWords = Regex(
         "(gleiche[nms]?|selbe[nms]?|dasselbe|vorige[nms]?|letzte[nms]?|diese[nms]?) (bild|motiv|szene)|dasselbe|änder|nochmal|noch ?mal|stattdessen|" +
+            "ersetz|tausch|entfern|füg\\w* .*hinzu|mach (sie|ihn|es|das)|\\b(replace|remove|add)\\b|" +
             "\\b(same|previous|last|this) (image|picture|pic)|\\bchange\\b|instead",
         RegexOption.IGNORE_CASE,
     )
@@ -1091,7 +1092,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     webVideos = streamingWebVideos.distinctBy { it.url },
                     sources = streamingSources.distinctBy { it.url },
                     // Faktenprüfung: Namen und Zahlen, die in keiner gelesenen Quelle stehen
-                    unverified = if (error == null && toolTexts.isNotEmpty())
+                    unverified = if (error == null && toolTexts.isNotEmpty() && streamingSources.isNotEmpty())
                         runCatching { de.davscha.denkwerk.engine.FactCheck.unverified(text, toolTexts.toString(), userMsg.text) }.getOrDefault(emptyList())
                     else emptyList(),
                 )
