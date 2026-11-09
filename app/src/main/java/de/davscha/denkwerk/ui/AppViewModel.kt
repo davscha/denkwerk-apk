@@ -299,32 +299,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         RegexOption.IGNORE_CASE,
     ).containsMatchIn(t.trim())
 
-    /** Will der Nutzer ein Bild gemalt haben? (für Modelle ohne Werkzeuge) */
-    private fun wantsPaint(text: String): Boolean {
-        val t = text.trim().lowercase()
-        if (Regex("\\b(mal|male|malst|zeichne|zeichnest|generier\\w*|erstell\\w*|erzeug\\w*|mach\\w*|paint|draw|generate|create|make)\\b.*\\b(bild\\w*|foto|zeichnung|illustration|gemälde|image|picture|drawing)\\b")
-                .containsMatchIn(t)) return true
-        if (Regex("^(male|zeichne|paint|draw)\\b").containsMatchIn(t)) return true
-        // „ändere …“, „nochmal mit …“ direkt nach einem gemalten Bild
-        return lastPaintPrompt() != null && sameImageWords.containsMatchIn(t) &&
-            currentChat?.messages?.lastOrNull { !it.fromUser }?.imagePaths?.any { ComfyClient.seedOf(it) != null } == true
-    }
-
-    /** Prompt des zuletzt gemalten Bildes (steht als Code-Block unter dem Bild) */
-    private fun lastPaintPrompt(): String? =
-        currentChat?.messages.orEmpty().asReversed().firstOrNull { !it.fromUser && it.imagePaths.any { p -> ComfyClient.seedOf(p) != null } }
-            ?.let { m -> Regex("```\\w*\\n([^`]+)```").find(m.text)?.groupValues?.get(1)?.trim() ?: m.toolEvents.firstOrNull { it.name == "bild_malen" }?.detail }
-
-    /** Antwort des Modells zu einer sauberen Tag-Liste machen */
-    private fun cleanTagPrompt(raw: String): String {
-        val inBlock = Regex("```\\w*\\n?([^`]+)```").find(raw)?.groupValues?.get(1) ?: raw
-        return inBlock.replace(Regex("(?i)^\\s*(prompt|tags|bild-prompt)\\s*:"), "")
-            .replace(Regex("[*\"`]"), "")
-            .replace(Regex("\\s*\\n+\\s*"), ", ")
-            .split(',').map { it.trim().trimEnd('.') }.filter { it.isNotBlank() && it.length < 60 }
-            .distinct().joinToString(", ")
-    }
-
     /** Suchanfrage aus der Nachricht machen: Höflichkeitsfloskeln und „such im Internet“ weg */
     private fun searchQueryFrom(text: String): String =
         text.replace(Regex("(?i)\\b(bitte|kannst du( mir)?|könntest du|sag mir|erzähl mir|such(e)?( mal)?( mir)?( im (internet|web|netz))?( nach)?|schau( mal)?( im (internet|web|netz))?( nach)?)\\b"), " ")
@@ -919,7 +893,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val toolImages = mutableListOf<String>()
             val toolTexts = StringBuilder() // alles, was die Werkzeuge gelesen haben – für die Faktenprüfung
             var loopDetected = false
-            var resync = false
             var error: String? = null
             var tps = 0f
             try {
@@ -932,10 +905,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 engineSyncKey = null // stimmt erst wieder, wenn die Antwort vollständig ist
                 var prompt = withContext(Dispatchers.IO) { fullPrompt(userMsg) }
 
-                // Ohne Werkzeuge (internes Modell): Malwünsche erkennt die App selbst
-                val appPaint = !useTools && paintAvailable && wantsPaint(userMsg.text)
                 // Websuche VOR der Antwort – kleine Modelle überschätzen sonst ihr Wissen und suchen nicht von selbst
-                if (!appPaint && shouldPreSearch(userMsg)) {
+                if (shouldPreSearch(userMsg)) {
                     val query = searchQueryFrom(userMsg.text)
                     streamingTools = streamingTools + ToolEvent("web_suche", query, "läuft …", running = true)
                     // Auf dem Gerät (kleiner Kontext) nur einen Artikel lesen
@@ -999,27 +970,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                     }
-                } else if (appPaint) {
-                    // 1) Modell schreibt nur den Tag-Prompt (unsichtbar), 2) App malt, 3) Prompt steht als Block unter dem Bild
-                    streamingTools = streamingTools + ToolEvent("bild_malen", "Prompt schreiben …", "läuft …", running = true)
-                    val previous = lastPaintPrompt()
-                    val same = previous != null && sameImageWords.containsMatchIn(userMsg.text)
-                    val ask = "Schreibe für den folgenden Bildwunsch NUR einen Bild-Prompt: eine Kommaliste aus 12 bis 30 englischen " +
-                        "Danbooru-Tags (z. B. 1girl, solo, long hair, red dress, beach, sunset). Keine Sätze, keine Erklärung, nichts davor oder danach. " +
-                        (if (same) "Das vorige Bild hatte diesen Prompt: $previous\nÜbernimm ihn und ändere nur, was gewünscht ist. " else "") +
-                        "Fehlt ein Motiv, denk dir ein schönes aus.\n\nBildwunsch: ${userMsg.text}"
-                    val raw = StringBuilder()
-                    eng.send(ask, emptyList()).collect { raw.append(it) }
-                    val tags = cleanTagPrompt(raw.toString())
-                    if (tags.isBlank()) throw java.io.IOException("Das Modell hat keinen Bild-Prompt geschrieben")
-                    streamingTools = streamingTools.map { if (it.running) it.copy(detail = tags.take(60)) else it }
-                    val start2 = System.currentTimeMillis()
-                    val (path, note) = paintWithSeed(tags, same)
-                    val secs2 = (System.currentTimeMillis() - start2) / 1000
-                    streamingTools = streamingTools.map { if (it.running) it.copy(running = false, summary = "fertig · $secs2 s$note") else it }
-                    toolImages += path
-                    streamingText = "Hier ist dein Bild. 🎨\n\n```\n$tags\n```"
-                    resync = true // Gesprächsstand der Engine passt nicht mehr zum Chat → beim nächsten Mal neu aufbauen
                 } else {
                     eng.send(prompt, userMsg.imagePaths).collect { piece -> onText(piece) }
                 }
@@ -1027,7 +977,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tps = if (secs > 0.2f) chunks / secs else 0f
                 if (streamingTools.isNotEmpty()) tps = 0f // Werkzeug-Pausen verfälschen die Geschwindigkeit
                 finalText = streamingText
-                if (!stopRequested && !resync) engineSyncKey = syncKey(chatId, history.size + 2)
+                if (!stopRequested) engineSyncKey = syncKey(chatId, history.size + 2)
             } catch (e: CancellationException) {
                 finalText = streamingText
             } catch (e: Throwable) {

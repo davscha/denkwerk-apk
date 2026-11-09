@@ -42,4 +42,3 @@
 - [x] Bilder malen über ComfyUI (NoobAI, Ordner denkwerk/noobai, Char- und Style-LoRAs)
 - [x] Testphase: Anima-Workflow (AnimaPhotoTurbo, Qwen-Encoder/VAE), Breite × Höhe statt Format (Standard 960 × 1280); NoobAI-Checkpoints/LoRAs vorerst entfernt
 - [x] Seed: „das gleiche Bild, aber …“ behält den Seed, 🔒 am Bild hält ihn fest
-- [x] Malen auch mit dem internen Modell (App erkennt Malwünsche, Modell schreibt nur die Tags)
