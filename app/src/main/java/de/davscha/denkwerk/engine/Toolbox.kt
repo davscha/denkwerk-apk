@@ -251,7 +251,8 @@ class Toolbox(
             val same = args.optBoolean("gleiches_bild", false) || args.optString("gleiches_bild") == "true"
             val (path, note) = paint(args.optString("prompt"), same)
             val secs = (System.currentTimeMillis() - start) / 1000
-            ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Beschreibe kurz, was du gemalt hast.", "fertig · $secs s$note", images = listOf(path))
+            ToolOutput("Das Bild wurde gemalt und wird dem Nutzer angezeigt. Rufe bild_malen dafür nicht noch einmal auf und beschreibe das Bild nicht erneut – " +
+                "erledige nur noch die übrigen Teile der Anfrage (z. B. eine Tabelle) oder antworte kurz.", "fertig · $secs s$note", images = listOf(path))
         }
         "anime_bild_quelle" -> sauceNao(args.optString("bild"))
         "auf_seite_suchen" -> siteSearch(

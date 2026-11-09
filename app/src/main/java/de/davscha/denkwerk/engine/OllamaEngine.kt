@@ -57,6 +57,15 @@ class OllamaClient(host: String, port: Int) {
         return JSONObject(post("/api/generate", body, timeoutMs = 60_000)).optString("response").trim()
     }
 
+    /** Längere Antwort ohne Verlauf (z. B. Bildbeschreibung als Ersatz, wenn das Modell bild_malen nicht aufgerufen hat) */
+    fun describe(model: String, prompt: String): String {
+        val body = JSONObject().put("model", model).put("prompt", prompt).put("stream", false)
+            .put("keep_alive", "30m")
+            .put("options", JSONObject().put("temperature", 0.5).put("num_predict", 300))
+        return JSONObject(post("/api/generate", body, timeoutMs = 120_000)).optString("response")
+            .replace(Regex("(?s)<think>.*?</think>"), "").trim()
+    }
+
     /** Modell sofort aus dem Grafikspeicher werfen (z. B. damit ComfyUI Platz hat). */
     fun unload(model: String) {
         post("/api/generate", JSONObject().put("model", model).put("keep_alive", 0), timeoutMs = 20_000)
@@ -127,6 +136,9 @@ class OllamaEngine(
 
     /** Nachdenken an/aus (nur bei Denk-Modellen); aus = schneller */
     var thinkingEnabled: () -> Boolean = { true }
+
+    /** true = nach einem erfolgreichen bild_malen sofort fertig (keine weitere Runde); false = Anfrage hat noch weitere Teile */
+    @Volatile var finishAfterPaint: Boolean = true
 
     /** Bekommt die Gedanken des Modells Stück für Stück (für die Anzeige „denkt nach …“) */
     @Volatile var onThinking: ((String) -> Unit)? = null
@@ -249,7 +261,7 @@ class OllamaEngine(
             // Nur gemalt und alles gut? Dann fertig – das Modell wurde fürs Malen entladen,
             // eine weitere Runde hieße es erst wieder zu laden
             val names = (0 until calls.length()).mapNotNull { calls.optJSONObject(it)?.optJSONObject("function")?.optString("name") }
-            if (names.isNotEmpty() && names.all { it == "bild_malen" } && turn.last().optString("content").startsWith("Das Bild wurde gemalt")) {
+            if (finishAfterPaint && names.isNotEmpty() && names.all { it == "bild_malen" } && turn.last().optString("content").startsWith("Das Bild wurde gemalt")) {
                 val done = "Hier ist dein Bild. 🎨"
                 emit(ToolStreamEvent.Text(done))
                 turn += JSONObject().put("role", "assistant").put("content", done)

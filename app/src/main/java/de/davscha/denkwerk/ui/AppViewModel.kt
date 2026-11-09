@@ -299,6 +299,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         RegexOption.IGNORE_CASE,
     ).containsMatchIn(t.trim())
 
+    /** Will der Nutzer ein Bild gemalt haben? */
+    private fun wantsPaint(text: String): Boolean {
+        val t = text.trim().lowercase()
+        if (Regex("\\b(mal|male|malst|zeichne|zeichnest|generier\\w*|erstell\\w*|erzeug\\w*|paint|draw|generate|create)\\b.*\\b(bild\\w*|foto|zeichnung|illustration|gemälde|image|picture|drawing)\\b")
+                .containsMatchIn(t)) return true
+        if (Regex("^(bitte )?(male|zeichne|paint|draw)\\b").containsMatchIn(t)) return true
+        return Regex("\\b(noch|weiteres|neues|anderes|another|new) (ein |eins |one )?(bild|image|picture)").containsMatchIn(t)
+    }
+
+    /** Will der Nutzer außer dem Bild noch etwas (Tabelle, Erklärung …)? Dann nach dem Malen nicht sofort aufhören */
+    private fun asksMoreThanImage(text: String) =
+        Regex("\\b(und|dazu|außerdem|sowie|plus|and|also)\\b.*\\b(tabelle|liste|erklär\\w*|schreib\\w*|text|info\\w*|fakten|geschichte|table|list|explain|write|story)",
+            RegexOption.IGNORE_CASE).containsMatchIn(text)
+
+    /** Beschreibung des zuletzt gemalten Bildes (aus der 🎨-Karte) */
+    private fun lastPaintDescription(): String? =
+        currentChat?.messages.orEmpty().asReversed().firstNotNullOfOrNull { m ->
+            m.toolEvents.lastOrNull { it.name == "bild_malen" && it.ok && it.detail.isNotBlank() }?.detail
+        }
+
     /** Suchanfrage aus der Nachricht machen: Höflichkeitsfloskeln und „such im Internet“ weg */
     private fun searchQueryFrom(text: String): String =
         text.replace(Regex("(?i)\\b(bitte|kannst du( mir)?|könntest du|sag mir|erzähl mir|such(e)?( mal)?( mir)?( im (internet|web|netz))?( nach)?|schau( mal)?( im (internet|web|netz))?( nach)?)\\b"), " ")
@@ -954,7 +974,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (useTools) {
-                    (eng as OllamaEngine).sendWithTools(prompt, userMsg.imagePaths, toolbox.specs()) { name, args ->
+                    (eng as OllamaEngine).finishAfterPaint = !asksMoreThanImage(userMsg.text)
+                    eng.sendWithTools(prompt, userMsg.imagePaths, toolbox.specs()) { name, args ->
                         toolbox.run(name, args)
                     }.collect { ev ->
                         when (ev) {
@@ -979,6 +1000,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 streamingSources = streamingSources + ev.output.sources
                                 if (ev.output.ok) toolTexts.append(ev.output.forModel).append('\n')
                             }
+                        }
+                    }
+                    // Bild gewünscht, aber das Modell hat bild_malen nicht aufgerufen (schreibt z. B. „[Bild-Beschreibung …]“)?
+                    // Dann malt die App selbst: Beschreibung kurz vom Modell holen, ComfyUI malen lassen
+                    if (!stopRequested && paintAvailable && wantsPaint(userMsg.text) && streamingTools.none { it.name == "bild_malen" }) {
+                        streamingText = streamingText.replace(Regex("\\[(Bild-?[Bb]eschreibung|Bild|Image)[^\\]]*\\]\\s*"), "").trim()
+                        streamingTools = streamingTools + ToolEvent("bild_malen", "Beschreibung schreiben …", "läuft …", running = true)
+                        val desc = withContext(Dispatchers.IO) {
+                            runCatching {
+                                OllamaClient(settings.ollamaHost, settings.ollamaPort).describe(
+                                    settings.ollamaModel,
+                                    "Write ONE English image description for an image generator (2–5 sentences: subject, appearance, clothing, pose, " +
+                                        "setting, lighting, style, camera). Output only the description, nothing else.\n\n" +
+                                        (lastPaintDescription()?.takeIf { sameImageWords.containsMatchIn(userMsg.text) }?.let { "Previous image description (keep it, change only what is asked): $it\n\n" } ?: "") +
+                                        "Request: ${userMsg.text}",
+                                )
+                            }.getOrDefault("")
+                        }.replace(Regex("```\\w*"), "").trim().trim('"')
+                        if (desc.isBlank()) {
+                            streamingTools = streamingTools.map { if (it.running) it.copy(running = false, summary = "Fehler: keine Beschreibung", ok = false) else it }
+                        } else {
+                            streamingTools = streamingTools.map { if (it.running) it.copy(detail = desc.take(400)) else it }
+                            val t0 = System.currentTimeMillis()
+                            val res = runCatching { paintWithSeed(desc, false) }
+                            val secs0 = (System.currentTimeMillis() - t0) / 1000
+                            streamingTools = streamingTools.map {
+                                if (it.running) it.copy(running = false, summary = res.fold({ (_, note) -> "fertig · $secs0 s$note" }, { e -> "Fehler: ${e.message}" }), ok = res.isSuccess) else it
+                            }
+                            res.getOrNull()?.let { (path, _) -> toolImages += path }
                         }
                     }
                 } else {
@@ -1096,7 +1146,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun describeArgs(name: String, args: org.json.JSONObject): String = when (name) {
         "web_suche", "videos_suchen" -> args.optString("anfrage")
         "video_verstehen" -> args.optString("url").removePrefix("https://").removePrefix("www.")
-        "bild_malen" -> args.optString("prompt").take(60)
+        "bild_malen" -> args.optString("prompt").take(400)
 
         "bild_rueckwaertssuche", "anime_bild_quelle" -> args.optString("bild").let { b ->
             when {
@@ -1162,7 +1212,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val t = if (m.fromUser) {
                 val p = fullPrompt(m)
                 if (m.imagePaths.isNotEmpty()) "[Bild] $p" else p
-            } else PseudoToolCalls.strip(m.text, KNOWN_TOOLS)
+            } else {
+                // Gemalte Bilder: dem Modell zeigen, DASS bild_malen benutzt wurde – sonst ahmt es nur den Text nach
+                val painted = m.toolEvents.filter { it.name == "bild_malen" && it.ok }
+                val note = painted.joinToString("") { "[Werkzeug bild_malen aufgerufen mit prompt=\"${it.detail}\" – Bild wurde angezeigt]\n" }
+                note + PseudoToolCalls.strip(m.text, KNOWN_TOOLS)
+            }
             if (used + t.length > budget && kept.isNotEmpty()) break
             kept.addFirst(m.copy(text = t))
             used += t.length
