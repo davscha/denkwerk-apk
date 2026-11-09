@@ -76,7 +76,7 @@ private val KNOWN_TOOLS = setOf(
 
 /** Zusatz zur Anweisung, wenn Werkzeuge aktiv sind */
 private const val TOOL_HINT =
-    "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, beschreibe das Bild auf Englisch in klaren Sätzen (Motiv, Aussehen, Kleidung, Pose, Ort, Licht, Stil, Kamera) und ruf bild_malen auf. " +
+    "Möchte der Nutzer ein Bild gemalt/erstellt/generiert haben und bild_malen ist verfügbar, schreib den Bild-Prompt auf Englisch (wie in der Beschreibung von bild_malen verlangt) und ruf bild_malen auf. " +
         "Soll das zuletzt gemalte Bild nur geändert werden („das gleiche Bild, aber …“), übernimm die alte Beschreibung, bau die Änderung ein und setze gleiches_bild=true. " +
             "Fragt der Nutzer, woher ein Bild stammt, wer es gemacht hat oder nach ähnlichen/größeren Fassungen, nutze bild_rueckwaertssuche " +
         "(bei Anime/Zeichnungen zusätzlich anime_bild_quelle, falls vorhanden). " +
@@ -426,7 +426,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Für die Werkzeug-Beschreibung */
-    private fun recipeDescription(): String = "Modell: ${ComfyClient.shortName(recipe.unet)} (MOSS Image), Seitenverhältnis ${recipe.aspect}."
+    private fun recipeDescription(): String = "Modell: ${ComfyClient.shortName(recipe.unet)} (MOSS Image), Seitenverhältnis ${recipe.aspect}. " +
+        if (promptEnhanceState) "Schmücke den Wunsch des Nutzers zu einer ausführlichen Beschreibung aus (Details, Licht, Stil, Kamera)."
+        else "WICHTIG: Übersetze den Bildwunsch des Nutzers nur wörtlich ins Englische – nichts ergänzen, nichts weglassen, nichts abschwächen oder umdeuten."
+
+    /** Schalter „Prompt verbessern“ */
+    var promptEnhanceState by mutableStateOf(true)
+        private set
+
+    fun setPromptEnhance(on: Boolean) {
+        settings.promptEnhance = on
+        promptEnhanceState = on
+    }
 
     /**
      * Malt ein Bild: Ollama-Modell vorher entladen (Grafikspeicher!), Prompt zusammensetzen
@@ -507,7 +518,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val chat = currentChat ?: return
         if (paintSeconds != null) { toast = "Es wird gerade schon ein Bild gemalt."; return }
         if (!paintAvailable) { toast = "Erst ComfyUI einrichten: Einstellungen → Bilder malen"; openSettings(); return }
-        val short = prompt.replace(Regex("\\s+"), " ").take(60)
+        val short = prompt.replace(Regex("\\s+"), " ").take(400)
         val msg = ChatMessage(
             fromUser = false,
             text = "",
@@ -612,6 +623,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         toolsEnabledState = settings.toolsEnabled
         memoryEnabledState = settings.memoryEnabled
         webModeState = settings.webMode
+        promptEnhanceState = settings.promptEnhance
         refreshStorage()
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
@@ -800,6 +812,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val fact = addMemory(m.groupValues[1])
                 toast = "🧠 Gemerkt: $fact"
             }
+        }
+        // „!male …“: Text geht unverändert an ComfyUI – ohne KI dazwischen (kein Modell nötig)
+        Regex("^!(male|mal|paint|draw)\\s+(.+)", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(text.trim())?.let { m ->
+            if (!paintAvailable) { toast = "Erst ComfyUI einrichten: Einstellungen → Bilder malen"; return }
+            if (paintSeconds != null) { toast = "Es wird gerade schon ein Bild gemalt."; return }
+            val base = currentChat ?: Chat(title = Chat.titleFrom(m.groupValues[2]), presetId = pendingPresetId)
+            val chat = base.copy(messages = base.messages + ChatMessage(fromUser = true, text = text.trim()))
+            currentChatId = chat.id
+            upsert(chat)
+            paintFromPrompt(m.groupValues[2].trim())
+            return
         }
         if (engineStatus !is EngineStatus.Ready) {
             toast = when (engineStatus) {
@@ -1011,8 +1034,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             runCatching {
                                 OllamaClient(settings.ollamaHost, settings.ollamaPort).describe(
                                     settings.ollamaModel,
-                                    "Write ONE English image description for an image generator (2–5 sentences: subject, appearance, clothing, pose, " +
-                                        "setting, lighting, style, camera). Output only the description, nothing else.\n\n" +
+                                    (if (promptEnhanceState) "Write ONE English image description for an image generator (2–5 sentences: subject, appearance, clothing, pose, " +
+                                        "setting, lighting, style, camera). Output only the description, nothing else.\n\n"
+                                    else "Translate the image request literally into English for an image generator. Add nothing, leave nothing out, " +
+                                        "do not soften or reinterpret it. Output only the translation.\n\n") +
                                         (lastPaintDescription()?.takeIf { sameImageWords.containsMatchIn(userMsg.text) }?.let { "Previous image description (keep it, change only what is asked): $it\n\n" } ?: "") +
                                         "Request: ${userMsg.text}",
                                 )

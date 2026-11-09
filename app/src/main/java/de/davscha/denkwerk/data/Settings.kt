@@ -90,6 +90,11 @@ class Settings(context: Context) {
         get() = prefs.getInt("comfyPort", 8080)
         set(v) = prefs.edit().putInt("comfyPort", v).apply()
 
+    /** true = KI schmückt den Bildwunsch aus; false = nur wörtlich ins Englische übersetzen */
+    var promptEnhance: Boolean
+        get() = prefs.getBoolean("promptEnhance", true)
+        set(v) = prefs.edit().putBoolean("promptEnhance", v).apply()
+
     /** Bildrezept als JSON (Checkpoint, LoRAs, Sampler) */
     var imageRecipe: ImageRecipe
         get() = ImageRecipe.fromJson(prefs.getString("imageRecipe", "") ?: "")

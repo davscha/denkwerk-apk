@@ -652,6 +652,22 @@ private fun ComfySection(vm: AppViewModel) {
             OutlinedTextField(value = r.sampler, onValueChange = { vm.updateRecipe(r.copy(sampler = it.trim())) }, label = { Text("Sampler") }, singleLine = true, modifier = Modifier.weight(1f))
             OutlinedTextField(value = r.scheduler, onValueChange = { vm.updateRecipe(r.copy(scheduler = it.trim())) }, label = { Text("Scheduler") }, singleLine = true, modifier = Modifier.weight(1f))
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Prompt verbessern", fontSize = 14.sp)
+                Text(
+                    if (vm.promptEnhanceState) "Die KI schmückt deinen Wunsch aus (Details, Licht, Stil, Kamera)"
+                    else "Die KI übersetzt deinen Wunsch nur wörtlich ins Englische",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = vm.promptEnhanceState, onCheckedChange = { vm.setPromptEnhance(it) })
+        }
+        Text(
+            "Tipp: „!male …“ schickt deinen Text unverändert an ComfyUI – ganz ohne KI dazwischen.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Text(
             "Vor jedem Bild wird das Ollama-Modell entladen, damit ComfyUI genug Grafikspeicher hat – es lädt bei der nächsten Frage von selbst wieder.",
             fontSize = 11.sp,
