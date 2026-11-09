@@ -122,6 +122,10 @@ class Toolbox(
                     "Malt ein Bild mit ComfyUI auf dem PC des Nutzers (MOSS Image – versteht natürliche Sprache, auch lange Beschreibungen). " +
                         "Der Prompt beschreibt das Bild auf Englisch in klaren Sätzen oder Wortgruppen: Motiv, Aussehen, Kleidung, Pose, Ort, Licht, " +
                         "Stil und Kamera (z. B. \"A young woman in a red kimono stands under cherry blossoms at night, soft lantern light, photo, 35mm\"). " +
+                        "MOSS kann auch ganze Comicseiten mit mehreren Panels, Collagen, Poster und lesbaren Text im Bild in EINEM Bild malen – " +
+                        "will der Nutzer z. B. 6 Panels auf einer Seite, beschreibe die Seite mit allen Panels (Panel 1: …, Panel 2: …) in einem Prompt, statt abzulehnen. " +
+                        "Bei Bildfolgen (Comic, Geschichte) beschreibe wiederkehrende Figuren in JEDEM Prompt mit genau denselben Worten " +
+                        "(Alter, Haare, Gesicht, Kleidung, Zeichenstil), damit sie gleich aussehen. " +
                         "Seitenverhältnis stellt der Nutzer in den Einstellungen ein. Das Bild erscheint automatisch im Chat. " + recipeInfo(),
                     JSONObject()
                         .put("prompt", JSONObject().put("type", "string").put("description", "Bildbeschreibung auf Englisch"))

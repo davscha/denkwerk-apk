@@ -61,9 +61,13 @@ class OllamaClient(host: String, port: Int) {
     fun describe(model: String, prompt: String): String {
         val body = JSONObject().put("model", model).put("prompt", prompt).put("stream", false)
             .put("keep_alive", "30m")
-            .put("options", JSONObject().put("temperature", 0.5).put("num_predict", 300))
-        return JSONObject(post("/api/generate", body, timeoutMs = 120_000)).optString("response")
-            .replace(Regex("(?s)<think>.*?</think>"), "").trim()
+            .put("think", false) // Denk-Modelle verbrauchen sonst alle Tokens fürs Nachdenken → leere Antwort
+            .put("options", JSONObject().put("temperature", 0.5).put("num_predict", 700))
+        val answer = runCatching { post("/api/generate", body, timeoutMs = 120_000) }.getOrElse {
+            // Ältere Ollama-Versionen/Modelle mögen „think“ nicht → ohne nochmal
+            body.remove("think"); post("/api/generate", body, timeoutMs = 120_000)
+        }
+        return JSONObject(answer).optString("response").replace(Regex("(?s)<think>.*?</think>"), "").trim()
     }
 
     /** Modell sofort aus dem Grafikspeicher werfen (z. B. damit ComfyUI Platz hat). */
