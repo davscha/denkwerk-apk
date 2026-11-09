@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.BrokenImage
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Slideshow
@@ -101,6 +102,39 @@ fun openInLens(context: Context, img: GalleryImage) {
         }
     } catch (e: Exception) {
         android.widget.Toast.makeText(context, "Google Lens konnte nicht geöffnet werden", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** Eigenes Bild (z. B. von ComfyUI) in die Galerie kopieren: Bilder/Denkwerk */
+fun saveToGallery(context: Context, path: String) {
+    try {
+        val file = File(path)
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, file.name)
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, if (file.extension.lowercase() == "png") "image/png" else "image/jpeg")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/Denkwerk")
+        }
+        val resolver = context.contentResolver
+        val target = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: throw java.io.IOException("Galerie nicht erreichbar")
+        resolver.openOutputStream(target)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+        android.widget.Toast.makeText(context, "In der Galerie gespeichert: Bilder/Denkwerk", android.widget.Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Speichern fehlgeschlagen: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+    }
+}
+
+/** Eigenes Bild mit anderen Apps teilen (WhatsApp, Mail, Drive …) */
+fun shareImage(context: Context, path: String) {
+    try {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", File(path))
+        val send = Intent(Intent.ACTION_SEND)
+            .setType("image/*")
+            .putExtra(Intent.EXTRA_STREAM, uri)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        context.startActivity(Intent.createChooser(send, "Bild teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Teilen fehlgeschlagen: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -252,6 +286,19 @@ fun SlideshowDialog(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Eigene Bilder (gemalt, angehängt, heruntergeladen): in die Galerie oder teilen
+                    if (current != null && current.local) {
+                        TextButton(onClick = { saveToGallery(context, current.url) }) {
+                            Icon(Icons.Default.Download, null, tint = Mint, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("In Galerie", color = Mint)
+                        }
+                        TextButton(onClick = { shareImage(context, current.url) }) {
+                            Icon(Icons.Default.Share, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Teilen", color = Color.White)
+                        }
+                    }
                     if (current != null && !current.local) {
                         TextButton(onClick = { onSave(current) }) {
                             Icon(Icons.Default.Download, null, tint = Mint, modifier = Modifier.size(18.dp))
