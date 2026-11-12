@@ -110,10 +110,11 @@ object PromptArchive {
     private val generic = setOf(
         "the", "and", "for", "of", "with", "outfit", "outfits", "pose", "poses", "hair", "hd", "add", "on", "addon", "bundle", "pro",
         "dforce", "set", "pack", "collection", "series", "female", "male", "genesis", "expressions", "clothing", "clothes", "xi", "fn", "mb",
+        "swimwear", "suit", "wear", "starter", "essentials", "redux",
     )
     private val areaHint = mapOf(
         "hair" to Regex("(?i)haar|frisur|hair"),
-        "wardrobe" to Regex("(?i)outfit|kleid|klamotten|kostüm|anzug|clothes|wear|trägt|anzieh"),
+        "wardrobe" to Regex("(?i)outfit|kleid|klamotten|kostüm|anzug|clothes|wear|trägt|anzieh|bikini|badeanzug|swim"),
         "poses" to Regex("(?i)pose|posier"),
         "environments" to Regex("(?i)hintergrund|umgebung|\\bort\\b|environment|background|szene|location"),
     )
@@ -164,7 +165,14 @@ object PromptArchive {
         val hits = mutableListOf<Hit>()
         // 1) Voller Kurzname (längste zuerst, damit „Victoria 7“ nicht in „Vianne for Victoria 7“ landet)
         entries.filter { it.active }.sortedByDescending { it.short.length }.forEach { e ->
-            val n = norm(e.short)
+            val full = norm(e.short)
+            // Auch ohne Anhängsel: „Victoria 9 HD“ → „Victoria 9“, „Summertide Swimwear Outfit“ → „Summertide Swimwear“
+            val words = full.split(" ").toMutableList()
+            while (words.size > 1 && words.last() in generic) words.removeAt(words.lastIndex)
+            val base = words.joinToString(" ")
+            // Ein einzelnes Wort als Kurzform nur mit passendem Hinweiswort („Fashion“ allein ist zu allgemein)
+            val baseOk = words.size >= 2 || areaHint[e.area]?.containsMatchIn(text) == true
+            val n = if (t.contains(" $full ")) full else if (baseOk) base else full
             if (n.length < 4) return@forEach
             val i = t.indexOf(" $n ")
             if (i < 0 || hits.any { it.e.id == e.id }) return@forEach
