@@ -468,18 +468,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Für das Werkzeug: Seed wählen (festgehalten › gleiches Bild › neu) und malen */
     private suspend fun paintWithSeed(tags: String, same: Boolean): Pair<String, String> {
-        val reuse = if (same || sameImageWords.containsMatchIn(lastUserText)) lastPaintedSeed() else null
+        val plan = currentPlan
+        // Neue Szene aus dem Archiv (neue Figuren) → neuer Seed, auch wenn das Modell „gleiches Bild“ meldet
+        val sameOk = plan == null || plan.fromPrevious
+        val reuse = if (sameOk && (same || sameImageWords.containsMatchIn(lastUserText) || plan?.fromPrevious == true)) lastPaintedSeed() else null
         val seed = seedLock ?: reuse
         var note = when {
             seedLock != null -> " · 🔒 Seed fest"
             reuse != null -> " · gleicher Seed"
             else -> ""
         }
-        // Archiv hat Vorrang: Bausteine aus archive.json, das Modell liefert nur Stimmung/Extras
-        val plan = currentPlan
+        // Archiv hat Vorrang: Szene aus archive.json (Format wie scene.json), das Modell liefert nur die Handlung/Stimmung
         val prompt = if (plan != null) {
             note += " · 📦 " + plan.label()
-            de.davscha.denkwerk.data.PromptArchive.build(plan, extra = tags.replace(Regex("```\\w*"), "").trim().take(400))
+            de.davscha.denkwerk.data.PromptArchive.build(plan, action = tags.replace(Regex("```\\w*"), "").trim().take(500))
         } else tags
         // Gleicher Prompt + gleicher Seed = ComfyUI liefert dasselbe Bild aus dem Zwischenspeicher → ehrlich sagen
         val key = currentChatId
@@ -519,13 +521,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Für einen Malwunsch den Archiv-Plan bauen (oder null, wenn nichts aus dem Archiv passt) */
+    /**
+     * Für einen Malwunsch den Archiv-Plan bauen (oder null). Ohne Malwort, aber mit Archiv-Änderung
+     * („nimm eine stehende Pose aus Nocturne Poses“) wird das letzte Bild weiterentwickelt; „dann male“ malt die letzte Szene.
+     */
     private fun archivePlanFor(text: String): de.davscha.denkwerk.data.PromptArchive.Plan? {
         if (!archiveEnabledState || !paintAvailable || !de.davscha.denkwerk.data.PromptArchive.loaded) return null
+        val A = de.davscha.denkwerk.data.PromptArchive
         val prev = currentChatId?.let { lastPlans[it] }
+        val paint = wantsPaint(text)
         val same = prev != null && sameImageWords.containsMatchIn(text)
-        if (!wantsPaint(text) && !same) return null
-        return de.davscha.denkwerk.data.PromptArchive.plan(text, if (same) prev else null).takeIf { !it.isEmpty }
+        val rest = text.lowercase().replace(Regex("[^a-zäöüß ]"), " ").split(" ")
+            .filter { it.isNotBlank() && it !in setOf("dann", "bitte", "jetzt", "nochmal", "noch", "mal", "male", "mal's", "es", "das", "bild", "ein", "eins", "neu", "los", "jetzt", "draw", "paint", "it", "again", "now") }
+        val follow = prev != null && paint && rest.size <= 2
+        return when {
+            paint && (same || follow) -> A.plan(text, prev)
+            paint -> A.plan(text, null)
+            prev != null -> A.plan(text, prev).takeIf { it.changed }
+            else -> null
+        }?.takeIf { !it.isEmpty }
     }
 
     suspend fun paintImage(tags: String, fixedSeed: Long? = null): String {
@@ -1021,8 +1035,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 currentPlan = archivePlanFor(userMsg.text)
                 currentPlan?.let { plan ->
                     prompt += "\n\n[Bild-Archiv: Diese Bausteine setzt die App automatisch in den Bild-Prompt ein: ${plan.label()}. " +
-                        "Ruf bild_malen auf und schreib als prompt NUR einen kurzen englischen Satz zu Stimmung, Gesichtsausdruck und Extras. " +
-                        "Aussehen, Haare, Kleidung, Pose, Ort und Kamera NICHT beschreiben – das kommt aus dem Archiv.]"
+                        "Ruf JETZT bild_malen auf und schreib als prompt NUR 1–2 kurze englische Sätze: was die Figuren tun und wie sie zueinander stehen, " +
+                        "Gesichtsausdruck, Stimmung und Bildstil" + (if (plan.people.size > 1) " – benutze die Namen ${plan.names()}" else "") + ". " +
+                        "Aussehen, Haare, Kleidung, Pose, Ort und Kamera NICHT beschreiben – das kommt aus dem Archiv. Keine Rückfragen.]"
                 }
 
                 // Websuche VOR der Antwort – kleine Modelle überschätzen sonst ihr Wissen und suchen nicht von selbst
@@ -1093,7 +1108,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     // Bild gewünscht, aber das Modell hat bild_malen nicht aufgerufen (schreibt z. B. „[Bild-Beschreibung …]“)?
                     // Dann malt die App selbst: Beschreibung kurz vom Modell holen, ComfyUI malen lassen
-                    if (!stopRequested && paintAvailable && wantsPaint(userMsg.text) && streamingTools.none { it.name == "bild_malen" }) {
+                    if (!stopRequested && paintAvailable && currentPlan != null && streamingTools.none { it.name == "bild_malen" }) {
+                        // Archiv-Szene: die App malt selbst, auch wenn das Modell nur geredet hat
+                        streamingText = ""
+                        streamingTools = streamingTools + ToolEvent("bild_malen", "Szene aus dem Archiv", "läuft …", running = true)
+                        val t0 = System.currentTimeMillis()
+                        val res = runCatching { paintWithSeed("", false) }
+                        val secs0 = (System.currentTimeMillis() - t0) / 1000
+                        streamingTools = streamingTools.map {
+                            if (it.running) it.copy(running = false, summary = res.fold({ (_, note) -> "fertig · $secs0 s$note" }, { e -> "Fehler: ${e.message}" }), ok = res.isSuccess) else it
+                        }
+                        res.getOrNull()?.let { (path, _) -> toolImages += path; streamingText = "Hier ist dein Bild. 🎨" }
+                    } else if (!stopRequested && paintAvailable && wantsPaint(userMsg.text) && streamingTools.none { it.name == "bild_malen" }) {
                         streamingText = streamingText.replace(Regex("\\[(Bild-?[Bb]eschreibung|Bild|Image)[^\\]]*\\]\\s*"), "").trim()
                         streamingTools = streamingTools + ToolEvent("bild_malen", "Beschreibung schreiben …", "läuft …", running = true)
                         val desc = withContext(Dispatchers.IO) {
