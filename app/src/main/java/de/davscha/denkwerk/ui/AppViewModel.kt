@@ -481,8 +481,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             note += " · 📦 " + plan.label()
             de.davscha.denkwerk.data.PromptArchive.build(plan, extra = tags.replace(Regex("```\\w*"), "").trim().take(400))
         } else tags
+        // Gleicher Prompt + gleicher Seed = ComfyUI liefert dasselbe Bild aus dem Zwischenspeicher → ehrlich sagen
+        val key = currentChatId
+        if (key != null && seed != null && lastPaintKey[key] == "$seed|$prompt") note += " · ⚠️ nichts geändert – Eintrag nicht im Archiv gefunden?"
         val path = paintImage(prompt, seed)
-        if (plan != null) currentChatId?.let { lastPlans[it] = plan }
+        if (key != null) {
+            if (plan != null) lastPlans[key] = plan
+            ComfyClient.seedOf(path)?.let { lastPaintKey[key] = "$it|$prompt" }
+        }
         return path to note
     }
 
@@ -491,6 +497,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Plan des laufenden Bildes und letzter Plan pro Chat („gleiches Bild, aber andere Pose“) */
     private var currentPlan: de.davscha.denkwerk.data.PromptArchive.Plan? = null
     private val lastPlans = mutableMapOf<String, de.davscha.denkwerk.data.PromptArchive.Plan>()
+    /** Seed + Prompt des letzten Bildes pro Chat (erkennt „nichts geändert“) */
+    private val lastPaintKey = mutableMapOf<String, String>()
 
     var archiveEnabledState by mutableStateOf(true)
         private set

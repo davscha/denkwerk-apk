@@ -127,6 +127,10 @@ object PromptArchive {
                 (n.length >= 4 && t.contains(" $n ") && named.none { norm(it.short).contains(n) })
             if (hit) named += e
         }
+        // SKU-Nummern („Environment mit der SKU 118369“) – jede 4- bis 6-stellige Zahl, die zu einem Produkt passt
+        Regex("\\b(\\d{4,6})\\b").findAll(text).mapNotNull { it.value.toIntOrNull() }.forEach { sku ->
+            entries.firstOrNull { it.active && it.json.optInt("sku", -1) == sku }?.let { e -> if (named.none { it.id == e.id }) named += e }
+        }
         var p = previous?.copy(filled = emptySet()) ?: Plan()
         val change = Regex("(?i)\\b(andere[nmrs]?|neue[nmrs]?|anderer|other|different)\\b")
         named.forEach { e ->
