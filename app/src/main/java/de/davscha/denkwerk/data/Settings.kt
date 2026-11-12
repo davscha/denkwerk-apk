@@ -90,6 +90,11 @@ class Settings(context: Context) {
         get() = prefs.getInt("comfyPort", 8080)
         set(v) = prefs.edit().putInt("comfyPort", v).apply()
 
+    /** Prompt-Archiv (archive.json) beim Malen benutzen */
+    var archiveEnabled: Boolean
+        get() = prefs.getBoolean("archiveEnabled", true)
+        set(v) = prefs.edit().putBoolean("archiveEnabled", v).apply()
+
     /** true = KI schmückt den Bildwunsch aus; false = nur wörtlich ins Englische übersetzen */
     var promptEnhance: Boolean
         get() = prefs.getBoolean("promptEnhance", true)

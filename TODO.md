@@ -42,4 +42,5 @@
 - [x] Bilder malen über ComfyUI (NoobAI, Ordner denkwerk/noobai, Char- und Style-LoRAs)
 - [x] MOSS-Image-Workflow (RealisticFreedom + 4-Step-LoRA, Qwen359B, Flux2-VAE): Schritte 6, CFG 1, Seitenverhältnis 9:16, 2 Megapixel
 - [x] Schalter „Prompt verbessern“ (aus = nur wörtlich übersetzen), „!male …“ schickt Text unverändert an ComfyUI
+- [x] Prompt-Archiv (archive.json): Figuren/Haare/Outfits/Posen/Orte/Kameras per Name, ID oder Kategorie; Zufall passend gefiltert; fehlende Haare+Kleidung ergänzt; Kamera-Zonen; Sicherheitsregel; {ID}-Platzhalter
 - [x] Seed: „das gleiche Bild, aber …“ behält den Seed, 🔒 am Bild hält ihn fest

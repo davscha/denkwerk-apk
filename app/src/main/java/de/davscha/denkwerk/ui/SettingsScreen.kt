@@ -663,6 +663,19 @@ private fun ComfySection(vm: AppViewModel) {
             }
             Switch(checked = vm.promptEnhanceState, onCheckedChange = { vm.setPromptEnhance(it) })
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Prompt-Archiv benutzen", fontSize = 14.sp)
+                Text(
+                    "archive.json (${vm.archiveCount} Einträge) hat beim Malen Vorrang: Figuren, Haare, Outfits, Posen, Orte und Kameras " +
+                        "per Name, ID oder Kategorie („Pin-up-Pose“, „draußen“); fehlende Haare und Kleidung werden ergänzt. " +
+                        "Eigene Fassung: Denkwerk/archive.json.",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = vm.archiveEnabledState, onCheckedChange = { vm.setArchiveEnabled(it) })
+        }
+        TextButton(onClick = { vm.reloadArchive() }) { Text("Archiv neu laden") }
         Text(
             "Tipp: „!male …“ schickt deinen Text unverändert an ComfyUI – ganz ohne KI dazwischen.",
             fontSize = 11.sp,

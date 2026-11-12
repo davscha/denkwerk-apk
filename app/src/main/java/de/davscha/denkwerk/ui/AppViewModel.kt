@@ -470,12 +470,54 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun paintWithSeed(tags: String, same: Boolean): Pair<String, String> {
         val reuse = if (same || sameImageWords.containsMatchIn(lastUserText)) lastPaintedSeed() else null
         val seed = seedLock ?: reuse
-        val note = when {
+        var note = when {
             seedLock != null -> " · 🔒 Seed fest"
             reuse != null -> " · gleicher Seed"
             else -> ""
         }
-        return paintImage(tags, seed) to note
+        // Archiv hat Vorrang: Bausteine aus archive.json, das Modell liefert nur Stimmung/Extras
+        val plan = currentPlan
+        val prompt = if (plan != null) {
+            note += " · 📦 " + plan.label()
+            de.davscha.denkwerk.data.PromptArchive.build(plan, extra = tags.replace(Regex("```\\w*"), "").trim().take(400))
+        } else tags
+        val path = paintImage(prompt, seed)
+        if (plan != null) currentChatId?.let { lastPlans[it] = plan }
+        return path to note
+    }
+
+    // ---------- Prompt-Archiv (archive.json) ----------
+
+    /** Plan des laufenden Bildes und letzter Plan pro Chat („gleiches Bild, aber andere Pose“) */
+    private var currentPlan: de.davscha.denkwerk.data.PromptArchive.Plan? = null
+    private val lastPlans = mutableMapOf<String, de.davscha.denkwerk.data.PromptArchive.Plan>()
+
+    var archiveEnabledState by mutableStateOf(true)
+        private set
+    var archiveCount by mutableStateOf(0)
+        private set
+
+    fun setArchiveEnabled(on: Boolean) {
+        settings.archiveEnabled = on
+        archiveEnabledState = on
+    }
+
+    /** Archiv neu laden (z. B. nach dem Ersetzen von Denkwerk/archive.json) */
+    fun reloadArchive() {
+        viewModelScope.launch(Dispatchers.IO) {
+            de.davscha.denkwerk.data.PromptArchive.load(getApplication(), store.dataDir)
+            archiveCount = de.davscha.denkwerk.data.PromptArchive.size
+            withContext(Dispatchers.Main) { toast = "Archiv geladen: $archiveCount Einträge" }
+        }
+    }
+
+    /** Für einen Malwunsch den Archiv-Plan bauen (oder null, wenn nichts aus dem Archiv passt) */
+    private fun archivePlanFor(text: String): de.davscha.denkwerk.data.PromptArchive.Plan? {
+        if (!archiveEnabledState || !paintAvailable || !de.davscha.denkwerk.data.PromptArchive.loaded) return null
+        val prev = currentChatId?.let { lastPlans[it] }
+        val same = prev != null && sameImageWords.containsMatchIn(text)
+        if (!wantsPaint(text) && !same) return null
+        return de.davscha.denkwerk.data.PromptArchive.plan(text, if (same) prev else null).takeIf { !it.isEmpty }
     }
 
     suspend fun paintImage(tags: String, fixedSeed: Long? = null): String {
@@ -487,7 +529,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { runCatching { OllamaClient(settings.ollamaHost, settings.ollamaPort).unload(settings.ollamaModel) } }
             }
             // MOSS versteht Sätze, Wortgruppen und JSON – nur Code-Zäune entfernen, Zeilen bleiben
-            val positive = tags.replace(Regex("```\\w*"), "").trim()
+            // {ID}/{Name}-Platzhalter aus dem Archiv auflösen (z. B. „!male {C0001} in {E0001}“)
+            val positive = de.davscha.denkwerk.data.PromptArchive.resolvePlaceholders(tags.replace(Regex("```\\w*"), "").trim())
             val seed = fixedSeed ?: (Math.random() * 1e15).toLong()
             val client = ComfyClient(settings.comfyHost, settings.comfyPort)
             val bytes = withContext(Dispatchers.IO) {
@@ -625,7 +668,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         memoryEnabledState = settings.memoryEnabled
         webModeState = settings.webMode
         promptEnhanceState = settings.promptEnhance
+        archiveEnabledState = settings.archiveEnabled
         refreshStorage()
+        // Prompt-Archiv (archive.json) im Hintergrund laden
+        viewModelScope.launch(Dispatchers.IO) {
+            de.davscha.denkwerk.data.PromptArchive.load(app, store.dataDir)
+            archiveCount = de.davscha.denkwerk.data.PromptArchive.size
+        }
         viewModelScope.launch {
             val loaded = withContext(Dispatchers.IO) { store.loadAll() }
             chats.clear()
@@ -960,8 +1009,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 engineSyncKey = null // stimmt erst wieder, wenn die Antwort vollständig ist
                 var prompt = withContext(Dispatchers.IO) { fullPrompt(userMsg) }
 
+                // Prompt-Archiv zuerst: genannte Figuren, Outfits, Posen, Orte aus archive.json – das Modell schreibt nur noch Stimmung
+                currentPlan = archivePlanFor(userMsg.text)
+                currentPlan?.let { plan ->
+                    prompt += "\n\n[Bild-Archiv: Diese Bausteine setzt die App automatisch in den Bild-Prompt ein: ${plan.label()}. " +
+                        "Ruf bild_malen auf und schreib als prompt NUR einen kurzen englischen Satz zu Stimmung, Gesichtsausdruck und Extras. " +
+                        "Aussehen, Haare, Kleidung, Pose, Ort und Kamera NICHT beschreiben – das kommt aus dem Archiv.]"
+                }
+
                 // Websuche VOR der Antwort – kleine Modelle überschätzen sonst ihr Wissen und suchen nicht von selbst
-                if (shouldPreSearch(userMsg)) {
+                if (currentPlan == null && shouldPreSearch(userMsg)) {
                     val query = searchQueryFrom(userMsg.text)
                     streamingTools = streamingTools + ToolEvent("web_suche", query, "läuft …", running = true)
                     // Auf dem Gerät (kleiner Kontext) nur einen Artikel lesen
@@ -1075,6 +1132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     else msg
                 }
             } finally {
+                currentPlan = null
                 val text = when {
                     error != null && finalText.isBlank() -> "Fehler: $error"
                     error != null -> "$finalText\n\n_(abgebrochen: ${error})_"
