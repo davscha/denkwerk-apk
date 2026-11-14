@@ -296,6 +296,8 @@ private fun looksLikeImagePrompt(language: String, code: String): Boolean {
 private fun CodeBlock(language: String, code: String) {
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf(false) }
+    if (preview) HtmlPreviewDialog(code) { preview = false }
     LaunchedEffect(copied) {
         if (copied) {
             delay(1500)
@@ -317,6 +319,19 @@ private fun CodeBlock(language: String, code: String) {
         ) {
             Text(language.ifEmpty { "code" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
+            // „▶ Vorschau“ bei kompletten HTML-Seiten: im Chat ausprobieren
+            if (looksLikeHtmlPage(language, code)) {
+                Text(
+                    "▶ Vorschau",
+                    fontSize = 12.sp,
+                    color = Mint,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { preview = true }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             // „🎨 Malen“ bei Bild-Prompts (Tag-Listen), wenn ComfyUI eingerichtet ist
             val paint = LocalPaint.current
             if (paint != null && looksLikeImagePrompt(language, code)) {

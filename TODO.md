@@ -26,6 +26,7 @@
 - [ ] Python auf dem PC ausführen
 
 ## Als Nächstes
+- [x] HTML-Vorschau: Code-Blöcke mit kompletter Webseite per „▶ Vorschau“ im Chat ausprobieren (WebView mit JavaScript)
 - [x] Verzweigungen bei „Neu erzeugen“ (‹ 1/3 ›)
 - [x] Eigene Assistenten / GPTs (Symbol, Anweisung, Temperatur, Lieblingsmodell, Gesprächs-Starter)
 - [x] Assistenten mit KI-Hilfe erstellen (Stichpunkte → fertige Anweisung)
