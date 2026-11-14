@@ -362,7 +362,16 @@ class OllamaEngine(
                     val all = calls ?: JSONArray().also { calls = it }
                     for (i in 0 until tc.length()) all.put(tc.get(i))
                 }
-                if (o.optBoolean("done")) break
+                if (o.optBoolean("done")) {
+                    // Kontext voll → Antwort wurde abgeschnitten: sichtbar sagen statt still aufhören
+                    if (o.optString("done_reason") == "length") {
+                        val note = "\n\n⚠️ *Antwort abgeschnitten – der Kontext ist voll. Starte einen neuen Chat " +
+                            "oder stell in den Einstellungen mehr Kontext ein.*"
+                        reply.append(note)
+                        onText(note)
+                    }
+                    break
+                }
             }
         } catch (e: IOException) {
             // Stopp-Knopf trennt die Verbindung – das ist kein Fehler

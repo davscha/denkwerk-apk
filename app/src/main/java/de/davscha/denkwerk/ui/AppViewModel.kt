@@ -1320,9 +1320,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return r.getOrNull()
     }
 
-    /** Lange Chats kürzen, damit sie ins Kontextfenster passen (neueste Nachrichten bleiben). */
+    /**
+     * Lange Chats kürzen, damit sie ins Kontextfenster passen (neueste Nachrichten bleiben).
+     * Der Verlauf bekommt nur die Hälfte des Kontexts – die andere Hälfte bleibt frei für
+     * Systemprompt, Werkzeuge und vor allem die Antwort (sonst bricht lange Ausgabe wie Code mittendrin ab).
+     */
     private fun trimHistory(history: List<ChatMessage>): List<Pair<Boolean, String>> {
-        val budget = if (settings.source == Source.OLLAMA) (settings.ollamaContext * 2.5).toInt() else 9_000
+        val budget = if (settings.source == Source.OLLAMA) (settings.ollamaContext * 1.25).toInt() else 9_000
         val usable = history.filter { !it.isError && (it.text.isNotBlank() || it.documents.isNotEmpty()) }
         val kept = ArrayDeque<ChatMessage>()
         var used = 0
