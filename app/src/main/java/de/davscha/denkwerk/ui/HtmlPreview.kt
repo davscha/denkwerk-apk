@@ -65,7 +65,14 @@ fun HtmlPreviewDialog(html: String, onDismiss: () -> Unit) {
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
                             WebView(ctx).apply {
+                                // Volle Größe statt „wrap_content“ – sonst ist 100vh im WebView falsch
+                                // und Seiten mit height:100vh + overflow:hidden (z. B. Spiele) bleiben schwarz
+                                layoutParams = android.view.ViewGroup.LayoutParams(
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                    android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
                                 settings.javaScriptEnabled = true
+                                settings.mediaPlaybackRequiresUserGesture = false // Web-Audio-Töne in Spielen
                                 settings.domStorageEnabled = true
                                 settings.loadWithOverviewMode = true
                                 settings.useWideViewPort = true
